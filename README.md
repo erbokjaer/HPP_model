@@ -13,6 +13,8 @@ listCaseSets()                 % show the available case sets
 runSweep("grid_Pref_Pbess")    % run every case of a set
 ```
 
+Or open `main.m`, pick a case set and cases in its settings block, and press Run: it runs (or reloads) the selected cases, plots them and prints a summary table.
+
 Always open the project first. It puts `params/`, `models/`, `scripts/` and `utilities/` on the path and sends Simulink cache files to `work/`. No script uses `cd` or `addpath`.
 
 ## Folder layout
@@ -87,13 +89,13 @@ plotResults("handpicked", "noBess")          % one saved case
 plotResults(out, Cases=defineCases("oat_Pref"))   % straight from runSweep, nothing saved
 plotResults(..., Signals=["P_poc","SOC"])    % choose signals
 plotResults(..., Theme="light")              % light figure for reports
-plotResults(..., Docked=false)               % separate window (default: docked)
+plotResults(..., NewFigure=true)             % keep the old figure, open another
 
 T = summarizeResults("grid_Pref_Pbess")      % final, min and max per signal and case
 [out, cases] = loadResults("handpicked")     % the saved runs, for your own analysis
 ```
 
-Plots have one panel per signal on a shared time axis, powers in MW, and lines labelled by case name or by the values the case changes (`Pref=100 MW, Pmax=0 MW`). `loadResults` uses `results/<set>/sweep.mat` if it exists, otherwise all `case_NNN.mat` files of the set. For interactive browsing of a single run, Simulink's Simulation Data Inspector also works: `Simulink.sdi.view`.
+Plots have one panel per signal on a shared time axis, powers in MW, and lines labelled by case name or by the values the case changes (`Pref=100 MW, Pmax=0 MW`). Figures are always docked, and plotting the same set again redraws its existing figure (one figure per title, by default the set name) instead of opening a new one. `loadResults` uses `results/<set>/sweep.mat` if it exists, otherwise all `case_NNN.mat` files of the set. For interactive browsing of a single run, Simulink's Simulation Data Inspector also works: `Simulink.sdi.view`.
 
 Serial is the default for `runSweep`. Each pool worker needs about 1 GB of RAM, and on a 16 GB laptop starting a pool next to the desktop session has crashed MATLAB.
 

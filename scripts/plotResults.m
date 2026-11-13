@@ -7,12 +7,18 @@ function fig = plotResults(source, caseId, opts)
 %   plotResults(out, Cases=cases)             ... labelled with a case table
 %   plotResults(..., Signals=["P_poc","SOC"]) choose the signals
 %   plotResults(..., Parent=fig)              draw into an existing figure
-%   plotResults(..., Docked=false)            separate window (default: docked)
 %   plotResults(..., Theme="light")           light figure, e.g. for reports
 %                                             (default "auto": MATLAB's theme)
+%   plotResults(..., NewFigure=true)          keep the old figure, open a new one
 %
 %   One tile per signal, stacked with a shared time axis. Powers are shown
 %   in MW. Lines are labelled with caseLabels. Returns the figure handle.
+%
+%   Figures are always docked. Plotting the same thing again redraws the
+%   existing figure instead of opening a new one. "The same thing" is the
+%   figure title: by default the case set name, so every plot of
+%   "handpicked" lands in the figure named "handpicked". Give a different
+%   Title to keep two plots of one set side by side.
 %
 %   Example:
 %       out = runSweep("oat_Pref");
@@ -25,7 +31,7 @@ function fig = plotResults(source, caseId, opts)
         opts.Signals (1,:) string = ["P_poc", "P_bess_set", "SOC"]
         opts.Parent = []
         opts.Title (1,1) string = ""
-        opts.Docked (1,1) logical = true
+        opts.NewFigure (1,1) logical = false
         opts.Theme (1,1) string {mustBeMember(opts.Theme, ["auto","light","dark"])} = "auto"
     end
 
@@ -35,19 +41,14 @@ function fig = plotResults(source, caseId, opts)
     end
     labels = runLabels(out, cases);
 
+    key = figureKey(source, opts.Title);
     if isempty(opts.Parent)
-        if opts.Docked
-            fig = figure("WindowStyle", "docked");
-        else
-            fig = figure("WindowStyle", "normal");
-        end
+        fig = reuseOrCreateFigure(key, opts.NewFigure);
     else
         fig = opts.Parent;
         clf(fig);
     end
-    if opts.Theme ~= "auto"
-        theme(fig, opts.Theme);
-    end
+    applyTheme(fig, opts.Theme);
     t = tiledlayout(fig, numel(opts.Signals), 1, "TileSpacing", "compact", "Padding", "compact");
 
     ok = arrayfun(@(o) isempty(o.ErrorMessage), out);
@@ -87,12 +88,53 @@ function fig = plotResults(source, caseId, opts)
         end
     end
 
-    if opts.Title ~= ""
-        title(t, opts.Title, "Interpreter", "none");
-    elseif isstring(source) || ischar(source)
-        title(t, string(source), "Interpreter", "none");
+    if key ~= ""
+        title(t, key, "Interpreter", "none");
     end
     drawnow   % finish rendering so the figure can be exported right away
+end
+
+function key = figureKey(source, titleText)
+    % What identifies "the same plot": the title, else the case set name.
+    if titleText ~= ""
+        key = titleText;
+    elseif isstring(source) || ischar(source)
+        key = string(source);
+    else
+        key = "";
+    end
+end
+
+function fig = reuseOrCreateFigure(key, forceNew)
+    tag = "plotResults:" + key;
+    fig = gobjects(0);
+    if ~forceNew
+        fig = findobj(groot, "Type", "figure", "Tag", tag);
+    end
+    if isempty(fig)
+        name = key;
+        if name == ""
+            name = "plotResults";
+        end
+        fig = figure("WindowStyle", "docked", "Tag", tag, ...
+                     "Name", name, "NumberTitle", "off");
+    else
+        fig = fig(1);
+        clf(fig);
+        figure(fig);                 % bring its tab to the front
+    end
+end
+
+function applyTheme(fig, themeName)
+    if themeName ~= "auto"
+        theme(fig, themeName);
+    else
+        try
+            theme(fig, "auto");      % undo a light/dark choice on a reused figure
+        catch
+            % older releases: a new figure already follows MATLAB's theme
+        end
+    end
 end
 
 function labels = runLabels(out, cases)
