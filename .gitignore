@@ -1,0 +1,14 @@
+# Simulink build / cache artefacts (project routes them into work/)
+work/
+slprj/
+*.slxc
+*_grt_rtw/
+*_ert_rtw/
+*.mexw64
+*.autosave
+*.asv
+
+# Simulation output
+results/*
+!results/.gitkeep
+hpc/logs/

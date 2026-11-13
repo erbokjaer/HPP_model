@@ -1,0 +1,16 @@
+#!/bin/bash
+# LSF job array body: one MATLAB batch job per case of a case set.
+# Do not submit this directly - use hpc/submit.sh <caseSet>, which sets the
+# job name, the array size and CASESET.
+# Adjust the queue, walltime, memory and MATLAB module to match your cluster.
+
+#BSUB -q hpc
+#BSUB -n 1
+#BSUB -R "rusage[mem=4GB]"
+#BSUB -W 01:00
+#BSUB -o hpc/logs/hpp_%J_%I.out
+#BSUB -e hpc/logs/hpp_%J_%I.err
+
+module load matlab/R2026a
+
+matlab -batch "openProject('HPP_model.prj'); runCase('${CASESET}', ${LSB_JOBINDEX})"
