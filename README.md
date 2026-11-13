@@ -93,4 +93,12 @@ This submits one job per case, each running `runCase(set, i)`. The script counts
 - The controller's SOC input is not used yet; `SOCmin`, `SOCmax` and `p.ctrl.Ppoc_max` are defined but unused.
 - Known issue: the `"noBattery"` variant of `HPP_parameters` sets `p.bess.Pmax = 0` after `p.ctrl` is built, so `p.ctrl.Pbess_max` stays at 30 MW. Use the case `handpicked/noBess` instead.
 - Next phase: code generation for `HPP_controller` and an IEEE/CIGRE DLL for PSCAD. This needs Simulink Coder, Embedded Coder and a C compiler, which are not installed yet. Rapid Accelerator also needs the compiler.
-- The folder is not a git repository yet. `.gitignore` is ready.
+
+## Source control
+
+The repository is on GitHub: <https://github.com/erbokjaer/HPP_model>. The MATLAB project detects git, shows each file's status and can compare `.slx` versions block by block (Project → Source Control).
+
+- `.gitignore` keeps `work/`, `results/`, `hpc/logs/` and `.mcp.json` (local MATLAB MCP server settings) out of git.
+- Close a model before switching branches or pulling.
+- Commit model changes together with the parameter changes they depend on.
+- On the cluster: `git clone https://github.com/erbokjaer/HPP_model.git`, later `git pull`.
