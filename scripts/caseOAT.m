@@ -5,7 +5,7 @@ function cases = caseOAT(varargin)
 %
 %   Each row varies exactly one parameter; the other columns are NaN, which
 %   applyCase treats as "keep the default from HPP_parameters".
-%   Rows are named "<parameter>=<value>", e.g. "grid.Pref=1e+08".
+%   Rows are named by caseLabels, e.g. "Pref=100 MW" or "SOC0=0.4".
 
     if isempty(varargin) || mod(numel(varargin), 2) ~= 0
         error("caseOAT:args", "Give name-value pairs: caseOAT(""grid.Pref"", [...], ...).");
@@ -15,16 +15,15 @@ function cases = caseOAT(varargin)
 
     nRows = sum(cellfun(@numel, values));
     data  = NaN(nRows, numel(names));
-    rowNames = strings(nRows, 1);
 
     r = 0;
     for k = 1:numel(names)
         for v = values{k}(:)'
             r = r + 1;
             data(r, k) = v;
-            rowNames(r) = sprintf("%s=%g", names(k), v);
         end
     end
 
-    cases = array2table(data, 'VariableNames', names, 'RowNames', rowNames);
+    cases = array2table(data, 'VariableNames', names);
+    cases.Properties.RowNames = matlab.lang.makeUniqueStrings(caseLabels(cases));
 end

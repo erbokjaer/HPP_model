@@ -21,7 +21,7 @@ Always open the project first. It puts `params/`, `models/`, `scripts/` and `uti
 |---|---|
 | `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, controller). |
 | `models/` | `HPP.slx`, the top model (fixed-step ode4, 1 ms), and `HPP_controller.slx`, the referenced discrete controller (0.1 s). |
-| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. |
+| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. Results: `plotResults`, `summarizeResults`, `loadResults`, `caseLabels`. |
 | `scripts/+caseSets/` | Which variations to run: one file per case set. |
 | `utilities/` | `projectStartup.m` (runs when the project opens) and the one-off `setupSkeleton.m`. |
 | `hpc/` | LSF job array: `submit.sh` and `job.lsf`. |
@@ -78,6 +78,22 @@ In `handpicked`, adding a case is adding one line; the other cases never need ed
 `runCase` saves `results/<set>/case_NNN.mat` with `out`, `p` and `caseInfo`. `runSweep` saves `results/<set>/sweep.mat` with `out`, `cases` and `setName`. A rerun overwrites the file, so copy results you want to keep.
 
 Read signals with `out.yout.get("SOC").Values`. The logged signals are `P_poc`, `SOC` and `P_bess_set`.
+
+## Looking at results
+
+```matlab
+plotResults("handpicked")                    % all saved cases of a set, one line per case
+plotResults("handpicked", "noBess")          % one saved case
+plotResults(out, Cases=defineCases("oat_Pref"))   % straight from runSweep, nothing saved
+plotResults(..., Signals=["P_poc","SOC"])    % choose signals
+plotResults(..., Theme="light")              % light figure for reports
+plotResults(..., Docked=false)               % separate window (default: docked)
+
+T = summarizeResults("grid_Pref_Pbess")      % final, min and max per signal and case
+[out, cases] = loadResults("handpicked")     % the saved runs, for your own analysis
+```
+
+Plots have one panel per signal on a shared time axis, powers in MW, and lines labelled by case name or by the values the case changes (`Pref=100 MW, Pmax=0 MW`). `loadResults` uses `results/<set>/sweep.mat` if it exists, otherwise all `case_NNN.mat` files of the set. For interactive browsing of a single run, Simulink's Simulation Data Inspector also works: `Simulink.sdi.view`.
 
 Serial is the default for `runSweep`. Each pool worker needs about 1 GB of RAM, and on a 16 GB laptop starting a pool next to the desktop session has crashed MATLAB.
 
