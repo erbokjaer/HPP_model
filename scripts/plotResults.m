@@ -12,7 +12,9 @@ function fig = plotResults(source, caseId, opts)
 %   plotResults(..., NewFigure=true)          keep the old figure, open a new one
 %
 %   One tile per signal, stacked with a shared time axis. Powers are shown
-%   in MW. Lines are labelled with caseLabels. Returns the figure handle.
+%   in MW. Lines are labelled with caseLabels and coloured with dtuColors
+%   (the DTU design guide palette; lighter tints on a dark figure).
+%   Returns the figure handle.
 %
 %   Figures are always docked. Plotting the same thing again redraws the
 %   existing figure instead of opening a new one. "The same thing" is the
@@ -49,6 +51,7 @@ function fig = plotResults(source, caseId, opts)
         clf(fig);
     end
     applyTheme(fig, opts.Theme);
+    lineColors = dtuColors(figureStyle(fig));   % only the lines; background follows the theme
     t = tiledlayout(fig, numel(opts.Signals), 1, "TileSpacing", "compact", "Padding", "compact");
 
     ok = arrayfun(@(o) isempty(o.ErrorMessage), out);
@@ -61,6 +64,7 @@ function fig = plotResults(source, caseId, opts)
     for s = 1:numel(opts.Signals)
         sig = opts.Signals(s);
         ax(s) = nexttile(t);
+        ax(s).ColorOrder = lineColors;             % DTU design guide colours
         ax(s).LineStyleOrder = ["-", "--", ":"];   % dashed once the colours run out
         hold(ax(s), "on");
         for k = find(ok(:))'
@@ -122,6 +126,18 @@ function fig = reuseOrCreateFigure(key, forceNew)
         fig = fig(1);
         clf(fig);
         figure(fig);                 % bring its tab to the front
+    end
+end
+
+function style = figureStyle(fig)
+    % "light" or "dark", from the figure's current theme.
+    style = "light";
+    try
+        if string(fig.Theme.BaseColorStyle) == "dark"
+            style = "dark";
+        end
+    catch
+        % no theme information: assume a light figure
     end
 end
 

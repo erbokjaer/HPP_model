@@ -3,15 +3,16 @@
 %  listCaseSets() shows the available case sets; defineCases("<set>") shows
 %  the cases in a set with their numbers and names.
 
-%% Settings
-setName  = "handpicked";              % case set in scripts/+caseSets
-caseIds  = ["nominal", "noBess"];     % names or numbers, e.g. [1 4 7]; [] = all cases
+
+% Settings
+setName  = "grid_Pref_Pbess";              % case set in scripts/+caseSets
+caseIds  = [];     % names or numbers, e.g. [1 4 7]; [] = all cases
 rerun    = true;                      % false = reuse saved results where they exist
 signals  = ["P_poc", "P_bess_set", "SOC"];
 theme    = "auto";                    % "auto" (MATLAB theme), "light" or "dark"
 exportTo = "";                        % e.g. "figures/handpicked.png"; "" = no export
 
-%% Select cases
+% Select cases
 allCases = defineCases(setName);
 if isempty(caseIds)
     caseIds = 1:height(allCases);
@@ -19,7 +20,7 @@ end
 cases = allCases(caseIds, :);
 fprintf("\n%s: %d case(s)\n", setName, height(cases));
 
-%% Run (or load)
+% Run (or load)
 out = Simulink.SimulationOutput.empty;
 for k = 1:height(cases)
     id = caseIds(k);
@@ -46,6 +47,6 @@ if exportTo ~= ""
     fprintf("Exported %s\n", exportTo);
 end
 
-%% Summary
+% Summary
 summary = summarizeResults(out, Cases=cases, Signals=signals);
 disp(summary)

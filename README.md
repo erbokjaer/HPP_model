@@ -23,7 +23,7 @@ Always open the project first. It puts `params/`, `models/`, `scripts/` and `uti
 |---|---|
 | `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, controller). |
 | `models/` | `HPP.slx`, the top model (fixed-step ode4, 1 ms), and `HPP_controller.slx`, the referenced discrete controller (0.1 s). |
-| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. Results: `plotResults`, `summarizeResults`, `loadResults`, `caseLabels`. |
+| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. Results: `plotResults`, `summarizeResults`, `loadResults`, `caseLabels`, `dtuColors`. |
 | `scripts/+caseSets/` | Which variations to run: one file per case set. |
 | `utilities/` | `projectStartup.m` (runs when the project opens) and the one-off `setupSkeleton.m`. |
 | `hpc/` | LSF job array: `submit.sh` and `job.lsf`. |
@@ -95,7 +95,7 @@ T = summarizeResults("grid_Pref_Pbess")      % final, min and max per signal and
 [out, cases] = loadResults("handpicked")     % the saved runs, for your own analysis
 ```
 
-Plots have one panel per signal on a shared time axis, powers in MW, and lines labelled by case name or by the values the case changes (`Pref=100 MW, Pmax=0 MW`). Figures are always docked, and plotting the same set again redraws its existing figure (one figure per title, by default the set name) instead of opening a new one. `loadResults` uses `results/<set>/sweep.mat` if it exists, otherwise all `case_NNN.mat` files of the set. For interactive browsing of a single run, Simulink's Simulation Data Inspector also works: `Simulink.sdi.view`.
+Plots have one panel per signal on a shared time axis, powers in MW, and lines labelled by case name or by the values the case changes (`Pref=100 MW, Pmax=0 MW`). Line colours come from the DTU design guide (`dtuColors`: DTU blue, corporate red, green, orange, purple, navy, red; lighter DTU tints on a dark figure); the background follows the MATLAB theme. Figures are always docked, and plotting the same set again redraws its existing figure (one figure per title, by default the set name) instead of opening a new one. `loadResults` uses `results/<set>/sweep.mat` if it exists, otherwise all `case_NNN.mat` files of the set. For interactive browsing of a single run, Simulink's Simulation Data Inspector also works: `Simulink.sdi.view`.
 
 Serial is the default for `runSweep`. Each pool worker needs about 1 GB of RAM, and on a 16 GB laptop starting a pool next to the desktop session has crashed MATLAB.
 

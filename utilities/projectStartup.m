@@ -5,3 +5,13 @@
 
 p = HPP_parameters();
 fprintf("HPP_model: loaded default parameters into 'p' (variant: %s)\n", p.meta.variant);
+
+% Close any open Editor tabs, then open the entry script and README
+% (interactive sessions only, so batch/HPC runs are unaffected).
+% close() prompts to save modified files rather than discarding changes.
+if usejava("desktop")
+    close(matlab.desktop.editor.getAll);
+    root = currentProject().RootFolder;
+    edit(fullfile(root, "README.md"));
+    edit(fullfile(root, "main.m"));
+end
