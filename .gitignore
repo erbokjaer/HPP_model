@@ -8,6 +8,9 @@ slprj/
 *.autosave
 *.asv
 
+# Local tool configuration (machine-specific paths)
+.mcp.json
+
 # Simulation output
 results/*
 !results/.gitkeep
