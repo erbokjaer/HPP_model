@@ -1,17 +1,16 @@
 function cases = handpicked()
 %HANDPICKED  Named, hand-picked cases. Row "nominal" is the project default.
-%   NaN = keep the default from HPP_parameters. A row of all NaN is
-%   therefore exactly the default parameter set.
 %
-%   Add a case: add a row name and one value per column.
-%   Add a parameter: add a column (field path in p) with NaN for rows that
-%   should keep the default.
+%   One line per case: its name and only the parameters it changes, as
+%   {"field.path", value, ...}. Everything not listed keeps the default
+%   from HPP_parameters, so "nominal" lists nothing.
+%
+%   To add a case, add one line. The other cases never need editing.
 
-    names     = ["nominal"; "lowRef"; "highRef"; "noBess"];
-    grid_Pref = [NaN;       100e6;    200e6;     NaN    ];   % [W]
-    bess_Pmax = [NaN;       NaN;      NaN;       0      ];   % [W]
-
-    cases = table(grid_Pref, bess_Pmax, ...
-        'VariableNames', ["grid.Pref", "bess.Pmax"], ...
-        'RowNames',      names);
+    cases = caseList({
+        "nominal",  {}
+        "lowRef",   {"grid.Pref", 100e6}                  % [W]
+        "highRef",  {"grid.Pref", 200e6}                  % [W]
+        "noBess",   {"bess.Pmax", 0}                      % [W]
+    });
 end

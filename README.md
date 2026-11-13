@@ -21,7 +21,7 @@ Always open the project first. It puts `params/`, `models/`, `scripts/` and `uti
 |---|---|
 | `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, controller). |
 | `models/` | `HPP.slx`, the top model (fixed-step ode4, 1 ms), and `HPP_controller.slx`, the referenced discrete controller (0.1 s). |
-| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `caseGrid`, `caseOAT`, `listCaseSets`. |
+| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. |
 | `scripts/+caseSets/` | Which variations to run: one file per case set. |
 | `utilities/` | `projectStartup.m` (runs when the project opens) and the one-off `setupSkeleton.m`. |
 | `hpc/` | LSF job array: `submit.sh` and `job.lsf`. |
@@ -41,18 +41,28 @@ A case set is a function in `scripts/+caseSets/` that returns a table. Each colu
 | Set | Cases | Built with |
 |---|---|---|
 | `nominal` | 1: the defaults. **Project default.** | row `nominal` of `handpicked` |
-| `handpicked` | `nominal`, `lowRef`, `highRef`, `noBess` | a hand-written table |
+| `handpicked` | `nominal`, `lowRef`, `highRef`, `noBess` | `caseList` (one line per case) |
 | `grid_Pref_Pbess` | 9: every combination of 3 Pref × 3 BESS ratings | `caseGrid` |
 | `oat_Pref` | 8: Pref and BESS rating varied one at a time | `caseOAT` |
 
-To add a set, copy one of these files, rename it and edit it. Nothing else needs to change.
+To add a set, copy one of these files, rename it and edit it. Nothing else needs to change. Three helpers build the table:
 
 ```matlab
-function cases = my_sweep()
-    cases = caseGrid("grid.Pref", [100 150 200]*1e6, ...
-                     "pv.Prated", [25 50]*1e6);
-end
+% caseList: named cases, one line each, listing only what changes
+cases = caseList({
+    "nominal",  {}
+    "lowRef",   {"grid.Pref", 100e6}
+    "small",    {"grid.Pref", 100e6, "bess.Pmax", 15e6}
+});
+
+% caseGrid: every combination
+cases = caseGrid("grid.Pref", [100 150 200]*1e6, "pv.Prated", [25 50]*1e6);
+
+% caseOAT: one parameter at a time
+cases = caseOAT("grid.Pref", [50 100 200]*1e6, "bess.Pmax", [0 60]*1e6);
 ```
+
+In `handpicked`, adding a case is adding one line; the other cases never need editing.
 
 ## Running
 
