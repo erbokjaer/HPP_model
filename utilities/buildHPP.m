@@ -313,22 +313,47 @@ function buildNetwork(sys)
     % (networkSolverData). In: current injections per plant (buses,
     % system pu). Out: 1 network bus to the plants (V_re, V_im of all
     % asset terminals one step old, P_plant / Q_plant [W / var] per plant
-    % into the busbar, V_bus [pu]); 2 POC bus (P_poc [W], Q_poc [var],
-    % V_poc [pu]), power into the grid.
+    % into the busbar, V_bus [pu], grid frequency f [pu]); 2 POC bus
+    % (P_poc [W], Q_poc [var], V_poc [pu]), power into the grid.
+    % Layout as the controllers (rowChain): injections and grid source |
+    % network solution | output buses, signals passed with Goto/From.
     newSubsystem(sys);
+    cm.ref  = ["I_re_wpp", "I_im_wpp", "I_re_spp", "I_im_spp", "I_re_bess", "I_im_bess", "I_re", "I_im", "E"];
+    cm.meas = ["V_re", "V_im", "V_re_prev", "V_im_prev", "V_bus", "V_poc", "P_plant", "Q_plant", ...
+               "P_poc", "Q_poc", "P_plant_pu", "Q_plant_pu", "P_poc_pu", "Q_poc_pu"];
+
+    % ---- current injections (system pu) and grid source voltage ----
     tags = ["wpp", "spp", "bess"];
     for i = 1:3
-        inport(sys, "I " + tags(i), i);
+        add_block("simulink/Sources/In1", sys + "/I " + tags(i), "Port", num2str(i), "Position", [0 0 30 14]);
+        add_block("simulink/Signal Routing/Bus Selector", sys + "/I sel " + tags(i), ...
+            "Position", [0 0 6 60], "ShowName", "off");
     end
-    add_block("simulink/Signal Routing/Mux", sys + "/I_re all", "Inputs", "3");
-    add_block("simulink/Signal Routing/Mux", sys + "/I_im all", "Inputs", "3");
+    add_block("simulink/Signal Routing/Mux", sys + "/I_re all", "Inputs", "3", "Position", [0 0 6 90]);
+    add_block("simulink/Signal Routing/Mux", sys + "/I_im all", "Inputs", "3", "Position", [0 0 6 90]);
+    add_block("simulink/Sources/Constant", sys + "/E0", "Value", "net.E", "Position", [0 0 50 24]);
+    add_block("simulink/Sources/Step", sys + "/dip start", "Time", "p.grid.dip.t0", ...
+        "Before", "0", "After", "p.grid.dip.depth", "SampleTime", "0", "Position", [0 0 30 30]);
+    add_block("simulink/Sources/Step", sys + "/dip end", "Time", "p.grid.dip.t0 + p.grid.dip.dur", ...
+        "Before", "0", "After", "p.grid.dip.depth", "SampleTime", "0", "Position", [0 0 30 30]);
+    nb(sys, "sum", "E grid", "Inputs", "+-+");
+    set_param(sys + "/E grid", "Position", [0 0 30 170]);
+    rows = cell(0, 1);
     for i = 1:3
-        sel = sprintf("I sel %d", i);
-        busSelect(sys, sel, "I " + tags(i) + "/1", ["I_re", "I_im"]);
-        ln(sys, sel + "/1", sprintf("I_re all/%d", i), "");
-        ln(sys, sel + "/2", sprintf("I_im all/%d", i), "");
+        rows{end+1, 1} = [stg("I " + tags(i), 0), stg("I sel " + tags(i), 1, {}, {2, "I_im_" + tags(i)}), ...
+                          stg(">I_re_" + tags(i))]; %#ok<AGROW>
     end
+    rows = [rows
+        {[stg("@I_re_wpp", 0), stg("I_re all", 1, {2, "@I_re_spp"; 3, "@I_re_bess"}), stg(">I_re")]}
+        {[stg("@I_im_wpp", 0), stg("I_im all", 1, {2, "@I_im_spp"; 3, "@I_im_bess"}), stg(">I_im")]}
+        {[stg("E0", 0), stg("E grid", 1, {2, "dip start"; 3, "dip end"}), stg(">E")]}];
+    % bus selectors need their elements before rowChain sizes the rows
+    for i = 1:3
+        set_param(sys + "/I sel " + tags(i), "OutputSignals", "I_re,I_im");
+    end
+    [~, hIn, rIn] = ctrlSection(sys, "Current injections and grid source (dip)", rows, 40, 20, cm, areaColor("interface"));
 
+    % ---- network solution ----
     outs = ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "P_poc", "Q_poc", "V_poc"];
     body = [
         "Z  = complex(net.Zre, net.Zim);"
@@ -355,49 +380,52 @@ function buildNetwork(sys)
         "Vp = V(n);"
         "Spoc = Vp * conj((Vp - E) / Zg);          % power into the grid"
         "P_poc = real(Spoc);  Q_poc = imag(Spoc);  V_poc = abs(Vp);"];
-    addMatlabFunction(sys + "/solve", "solve", ["I_re", "I_im", "E"], outs, body, "net", [0 0 180 320]);
-    ln(sys, "I_re all/1", "solve/1", "I_re");
-    ln(sys, "I_im all/1", "solve/2", "I_im");
-    % grid source voltage with an optional dip (p.grid.dip: t0, dur, depth)
-    add_block("simulink/Sources/Constant", sys + "/E0", "Value", "net.E");
-    add_block("simulink/Sources/Step", sys + "/dip start", "Time", "p.grid.dip.t0", ...
-        "Before", "0", "After", "p.grid.dip.depth", "SampleTime", "0");
-    add_block("simulink/Sources/Step", sys + "/dip end", "Time", "p.grid.dip.t0 + p.grid.dip.dur", ...
-        "Before", "0", "After", "p.grid.dip.depth", "SampleTime", "0");
-    add_block("simulink/Math Operations/Sum", sys + "/E grid", "Inputs", "+-+");
-    ln(sys, "E0/1", "E grid/1", "");  ln(sys, "dip start/1", "E grid/2", "");  ln(sys, "dip end/1", "E grid/3", "");
-    ln(sys, "E grid/1", "solve/3", "E");
+    addMatlabFunction(sys + "/solve", "solve", ["I_re", "I_im", "E"], outs, body, "net", [0 0 160 300]);
+    outTags = ["V_re", "V_im", "P_plant_pu", "Q_plant_pu", "V_bus", "P_poc_pu", "Q_poc_pu", "V_poc"];
+    outsS = [num2cell((2:8)'), num2cell(outTags(2:8)')];
+    rowsS = {[stg("@I_re", 0), stg("solve", 1, {2, "@I_im"; 3, "@E"}, outsS), stg(">" + outTags(1))]};
+    [~, hS, rS] = ctrlSection(sys, "Network solution, V = Z (I_inj + I_grid)", rowsS, rIn + 90, 20, cm, areaColor("asset"));
 
-    % terminal voltages one step old (generator "PLL"; avoids an algebraic loop)
-    add_block("simulink/Discrete/Memory", sys + "/V_re prev", "InitialCondition", "ones(net.nA,1)");
-    add_block("simulink/Discrete/Memory", sys + "/V_im prev", "InitialCondition", "zeros(net.nA,1)");
-    ln(sys, "solve/1", "V_re prev/1", "");
-    ln(sys, "solve/2", "V_im prev/1", "");
-    % buses out; powers from system pu to W / var
-    busCreator(sys, "network bus", 6);
-    ln(sys, "V_re prev/1", "network bus/1", "V_re");
-    ln(sys, "V_im prev/1", "network bus/2", "V_im");
-    chain(sys, "solve/3", "gain:net.Sb", "network bus/3", "P_plant to W", "P_plant");
-    chain(sys, "solve/4", "gain:net.Sb", "network bus/4", "Q_plant to var", "Q_plant");
-    ln(sys, "solve/5", "network bus/5", "V_bus");
-    % grid frequency [pu] with the optional step (p.grid.fev), same at all nodes
+    % ---- output buses: terminal voltages one step old (generator "PLL";
+    %      avoids an algebraic loop), powers from system pu to W / var ----
+    add_block("simulink/Discrete/Memory", sys + "/V_re prev", "InitialCondition", "ones(net.nA,1)", "Position", [0 0 30 30]);
+    add_block("simulink/Discrete/Memory", sys + "/V_im prev", "InitialCondition", "zeros(net.nA,1)", "Position", [0 0 30 30]);
+    for s = ["P_plant", "Q_plant", "P_poc", "Q_poc"]
+        nb(sys, "gain", s + " to SI", "Gain", "net.Sb");
+    end
     add_block("simulink/Sources/Step", sys + "/f grid", "Time", "p.grid.fev.t0", ...
-        "Before", "1", "After", "1 + p.grid.fev.df", "SampleTime", "0");
-    ln(sys, "f grid/1", "network bus/6", "f");
-    busCreator(sys, "POC bus", 3);
-    chain(sys, "solve/6", "gain:net.Sb", "POC bus/1", "P_poc to W", "P_poc");
-    chain(sys, "solve/7", "gain:net.Sb", "POC bus/2", "Q_poc to var", "Q_poc");
-    ln(sys, "solve/8", "POC bus/3", "V_poc");
-    outport(sys, "network", "network bus/1", 1);
-    outport(sys, "POC meas", "POC bus/1", 2);
+        "Before", "1", "After", "1 + p.grid.fev.df", "SampleTime", "0", "Position", [0 0 30 30]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/network bus", "Inputs", "6", "Position", [0 0 6 300]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/POC bus", "Inputs", "3", "Position", [0 0 6 150]);
+    add_block("simulink/Sinks/Out1", sys + "/network", "Port", "1", "Position", [0 0 30 14]);
+    add_block("simulink/Sinks/Out1", sys + "/POC meas", "Port", "2", "Position", [0 0 30 14]);
+    rowsO = {
+        [stg("@V_im", 0), stg("V_im prev"), stg(">V_im_prev")]
+        [stg("@P_plant_pu", 0), stg("P_plant to SI"), stg(">P_plant")]
+        [stg("@Q_plant_pu", 0), stg("Q_plant to SI"), stg(">Q_plant")]
+        [stg("@V_re", 0), stg("V_re prev"), stg("network bus", 1, {2, "@V_im_prev"; 3, "@P_plant"; 4, "@Q_plant"; ...
+         5, "@V_bus"; 6, "f grid"}), stg("network")]
+        [stg("@P_poc_pu", 0), stg("P_poc to SI"), stg(">P_poc")]
+        [stg("@Q_poc_pu", 0), stg("Q_poc to SI"), stg(">Q_poc")]
+        [stg("@P_poc", 0), stg("POC bus", 1, {2, "@Q_poc"; 3, "@V_poc"}), stg("POC meas")]};
+    [~, hO] = ctrlSection(sys, "Output buses (V one step old, powers in W and var)", rowsO, rS + 90, 20, cm, areaColor("interface"));
+    % bus element names come from the names of the lines into the creators
+    nameInputs(sys + "/network bus", ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "f"]);
+    nameInputs(sys + "/POC bus", ["P_poc", "Q_poc", "V_poc"]);
+    alignColumns(hIn, hS, hO);
 
     mk = Simulink.Mask.create(sys);
     mk.addParameter("Name", "net", "Prompt", "Network solver data", "Value", "p.net.solver", ...
         "Evaluate", "on", "Tunable", "off");
     mk.Description = "Positive-sequence phasor network (collector system, transformers, grid). " + ...
         "Solves V = Z*I each step. Data from networkSolverData(p).";
-    hideStructuralNames(sys);
-    Simulink.BlockDiagram.arrangeSystem(sys);
+end
+
+function nameInputs(blk, names)
+    ph = get_param(blk, "PortHandles");
+    for k = 1:numel(names)
+        set_param(get_param(ph.Inport(k), "Line"), "Name", names(k));
+    end
 end
 
 % ---------------------------------------------------------------------
@@ -1386,7 +1414,8 @@ function alignColumns(hIn, hMid, hOut)
     % each column (hMid: one handle array per column) share their left and
     % right edges, and the last area of every column ends at the same height
     if ~iscell(hMid), hMid = {hMid}; end
-    top = inf;  bot = -inf;
+    q1 = get_param(hIn, "Position");  q2 = get_param(hOut, "Position");
+    top = min(q1(2), q2(2));  bot = max(q1(4), q2(4));
     for c = 1:numel(hMid)
         P = cell2mat(arrayfun(@(h) get_param(h, "Position"), hMid{c}(:), "UniformOutput", false));
         top = min(top, min(P(:, 2)));  bot = max(bot, max(P(:, 4)));
