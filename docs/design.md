@@ -57,7 +57,7 @@ Values marked *typical* are starting points to be replaced by project data.
 
 The plant controllers use fixed-width vector ports (width N, from their model workspace), so a DLL is built for one N. Changing N means rerunning `buildHPP(All=true)`, which is acceptable.
 
-The network model (`models/network/`) and a library delay block are not built yet: in stage 1 the plant outputs are summed losslessly, and delays are plain Transport Delay blocks in `HPP.slx`.
+**Diagram layout (2026-11-16).** `HPP.slx` is organised as six subsystems (TSO, HPP controller, Wind / PV / BESS plant, Network, Logging) connected by virtual buses in SI units. Each subsystem converts to its controller's per-unit base and applies the communication delays of the links it receives. Controller models keep flat scalar ports for the DLL interface; Bus Selectors and Bus Creators sit around them. Forward signals are lines; feedback and logging signals are colour-coded Goto/From pairs (orange plant measurements, green network, grey logging). Each signal path between levels is one masked "link" block (gain, memory, transport delay). The network is a masked subsystem inside `HPP.slx` rather than a separate `models/network/` file, since its size depends on N and it is not a DLL. The reorganisation changed no results (largest relative difference 6e-13 on all logged signals). HPPC inports are ordered per source (TSO, POC, wind, PV, BESS).
 
 **Aggregation.** One asset instance can stand for several identical physical units (`nAgg`). With N = 2 and the current plant sizes, each instance is half a plant: one feeder, so plant totals stay unchanged. With `nAgg = 1` an instance is one physical turbine or inverter.
 
