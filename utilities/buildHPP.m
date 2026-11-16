@@ -622,9 +622,11 @@ end
 
 %% ===================================================================
 %  Asset model builder (plant side, not a DLL; template, created only if
-%  missing unless Force=true)
-%    inputs (left) -> asset controller -> generator -> outputs (right)
-%    terminal voltage and measured P, Q via local Goto/From
+%  missing unless Force=true). Same layout as the controllers (see
+%  rowChain): inputs | terminal measurements, asset controller, generator
+%  / converter, (battery energy) | outputs. Ports:
+%    in  1 P_set 2 Q_set 3 V_re 4 V_im [5 P_wind_avail | P_pv_avail]
+%    out 1 P 2 Q 3 P_avail 4 I_re 5 I_im [6 SOC]
 %  ===================================================================
 function buildAsset(type, folder)
     mdl = string(type + "_asset");
@@ -647,97 +649,74 @@ function buildAsset(type, folder)
         "clear pDefault"], newline));
     reload(ws);
     set_param(mdl, "ParameterArgumentNames", "ap");
-    green = "[0.122 0.816 0.510]";  orange = "[0.988 0.463 0.204]";
-
-    % asset controller, ports 1 P_set 2 Q_set 3 V_term 4 P_meas 5 Q_meas 6 source
-    cb = mdl + "/ctrl";
-    add_block("simulink/Ports & Subsystems/Model", cb, "ModelName", ctrl, "Position", [520 60 700 420]);
-    Simulink.ModelReference.refresh(cb);
-    setArg(cb, "par", "ap.ctrl");
-    set_param(cb, "BackgroundColor", areaColor("controller"));
-
-    % inports: set-points and source straight into the controller
-    add_block("simulink/Sources/In1", mdl + "/P_set", "Port", "1", "OutDataTypeStr", "double", "Position", [0 0 30 14]);
-    add_block("simulink/Sources/In1", mdl + "/Q_set", "Port", "2", "OutDataTypeStr", "double", "Position", [0 0 30 14]);
-    rowInto(mdl, "ctrl/1", "P_set", "P_set", 300);
-    rowInto(mdl, "ctrl/2", "Q_set", "Q_set", 300);
-    % terminal voltage phasor -> local Goto (used by the controller and the generator)
-    for j = 1:2
-        v = ["V_re", "V_im"]; v = v(j);
-        add_block("simulink/Sources/In1", mdl + "/" + v, "Port", num2str(2 + j), "OutDataTypeStr", "double", ...
-            "Position", [40, 460 + 50*j, 70, 474 + 50*j]);
-        g = addGoto(mdl, v, green);
-        rowFrom(mdl, v + "/1", g, v, 40);
-    end
-    % |V| for the controller
-    addMatlabFunction(mdl + "/terminal", "terminal", ["V_re", "V_im"], "V_term", ...
-        "V_term = sqrt(V_re^2 + V_im^2);", "", [0 0 90 60]);
-    set_param(mdl + "/terminal", "ShowName", "off");   % the block shows "terminal" itself
-    rowInto(mdl, "ctrl/3", "terminal", "V_term", 60);
-    rowInto(mdl, "terminal/1", addFrom(mdl, "V_re", green), "", 30);
-    rowInto(mdl, "terminal/2", addFrom(mdl, "V_im", green), "", 30);
-    % measured P, Q (one step old) back into the controller
-    for j = 1:2
-        s = ["P", "Q"]; s = s(j);
-        add_block("simulink/Discrete/Memory", mdl + "/" + s + " meas", "Position", [0 0 30 30]);
-        rowInto(mdl, "ctrl/" + (3 + j), [addFrom(mdl, s, orange), s + " meas"], s + "_meas", 40);
-    end
-    % primary source
+    isB = type == "BESS";
     switch type
         case "WT", src = "P_wind_avail";
         case "PV", src = "P_pv_avail";
         otherwise, src = "";
     end
-    if src ~= ""
-        add_block("simulink/Sources/In1", mdl + "/" + src, "Port", "5", "OutDataTypeStr", "double", "Position", [0 0 30 14]);
-        rowInto(mdl, "ctrl/6", src, src, 300);
-    else
-        rowInto(mdl, "ctrl/6", addFrom(mdl, "SOC", orange), "SOC", 300);
-    end
+    cm.ref  = ["P_set", "Q_set", "ip_cmd", "iq_cmd", "ip", "iq"];
+    cm.meas = ["V_re", "V_im", "V_term", "P_meas", "Q_meas", "P", "Q", "SOC", "P_avail", ...
+               "P_wind_avail", "P_pv_avail", "I_re", "I_im"];
+    ins = ["P_set", "Q_set", "V_re", "V_im"];
+    if src ~= "", ins(end+1) = src; end
+    [hIn, x] = ctrlInputs(mdl, ins, repmat("1", 1, numel(ins)), cm, "-1");
 
-    % generator placeholder (WECC REGC-like, no dynamics yet): current source
+    % terminal measurements: |V|, P and Q one step old
+    addMatlabFunction(mdl + "/terminal", "terminal", ["V_re", "V_im"], "V_term", ...
+        "V_term = sqrt(V_re^2 + V_im^2);", "", [0 0 90 60]);
+    nb(mdl, "mem", "P meas");  nb(mdl, "mem", "Q meas");
+    rowsM = {
+        [stg("@V_re", 0), stg("terminal", 1, {2, "@V_im"}), stg(">V_term")]
+        [stg("@P", 0), stg("P meas"), stg(">P_meas")]
+        [stg("@Q", 0), stg("Q meas"), stg(">Q_meas")]};
+    [y, h1, r1] = ctrlSection(mdl, "Terminal measurements", rowsM, x, 20, cm, areaColor("interface"));
+
+    % asset controller (future DLL), ports 1 P_set 2 Q_set 3 V_term 4 P_meas 5 Q_meas 6 source
+    cb = mdl + "/ctrl";
+    add_block("simulink/Ports & Subsystems/Model", cb, "ModelName", ctrl, "Position", [0 0 180 210]);
+    Simulink.ModelReference.refresh(cb);
+    setArg(cb, "par", "ap.ctrl");
+    set_param(cb, "BackgroundColor", areaColor("controller"));
+    if src ~= "", s6 = "@" + src; else, s6 = "@SOC"; end
+    rowsC = {[stg("@P_set", 0), stg("ctrl", 1, {2, "@Q_set"; 3, "@V_term"; 4, "@P_meas"; 5, "@Q_meas"; 6, s6}, ...
+              {2, "iq_cmd"; 3, "P_avail"}), stg(">ip_cmd")]};
+    [y, h2, r2] = ctrlSection(mdl, "Asset controller (" + ctrl + ")", rowsC, x, y, cm, areaColor("controller"));
+
+    % generator / converter: current dynamics, then a current source
     % aligned with the terminal voltage, I = (ip - j*iq) * V/|V|,
-    % so P = |V|*ip and Q = |V|*iq (+ = export / capacitive)
+    % P = |V|*ip, Q = |V|*iq (+ = export / capacitive)
     gen = [
         "v  = max(sqrt(V_re^2 + V_im^2), 1e-3);"
         "cr = V_re / v;  ci = V_im / v;"
-        "I_re = ip_cmd*cr + iq_cmd*ci;"
-        "I_im = ip_cmd*ci - iq_cmd*cr;"
-        "P = v * ip_cmd;"
-        "Q = v * iq_cmd;"];
-    % same port spacing as the controller (6 ports over its height), first
-    % two ports level with the controller's ip_cmd / iq_cmd
-    cpos = get_param(cb, "Position");
-    cy1 = portY(cb, "out", 1);  cy2 = portY(cb, "out", 2);  sp = cy2 - cy1;
-    addMatlabFunction(mdl + "/generator", "generator", ["ip_cmd", "iq_cmd", "V_re", "V_im"], ...
-        ["P", "Q", "I_re", "I_im"], gen, "", [cpos(3)+320, cy1 - sp/2, cpos(3)+460, cy1 - sp/2 + 4*sp]);
+        "I_re = ip*cr + iq*ci;"
+        "I_im = ip*ci - iq*cr;"
+        "P = v * ip;"
+        "Q = v * iq;"];
+    addMatlabFunction(mdl + "/generator", "generator", ["ip", "iq", "V_re", "V_im"], ...
+        ["P", "Q", "I_re", "I_im"], gen, "", [0 0 120 150]);
+    rowGen = [stg("@ip", 0), stg("generator", 1, {2, "@iq"; 3, "@V_re"; 4, "@V_im"}, ...
+              {2, "Q"; 3, "I_re"; 4, "I_im"}), stg(">P")];
     if type == "WT"
         % IEC 61400-27-1 Type 4 generator system: current rate limits, then
         % a first-order lag Tg (active current: only its rise is limited)
-        add_block("simulink/Discontinuities/Rate Limiter", mdl + "/dipmax", "Position", [0 0 40 30], ...
-            "RisingSlewLimit", "ap.gen.dipmax", "FallingSlewLimit", "-1e6");
-        add_block("simulink/Continuous/Transfer Fcn", mdl + "/Tg ip", "Position", [0 0 70 34], ...
-            "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
-        add_block("simulink/Discontinuities/Rate Limiter", mdl + "/diqmax", "Position", [0 0 40 30], ...
-            "RisingSlewLimit", "ap.gen.diqmax", "FallingSlewLimit", "-ap.gen.diqmax");
-        add_block("simulink/Continuous/Transfer Fcn", mdl + "/Tg iq", "Position", [0 0 70 34], ...
-            "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
-        rowFrom(mdl, "ctrl/1", ["dipmax", "Tg ip"], "ip_cmd", 40);
-        rowFrom(mdl, "ctrl/2", ["diqmax", "Tg iq"], "iq_cmd", 40);
-        ln(mdl, "Tg ip/1", "generator/1", "ip");
-        ln(mdl, "Tg iq/1", "generator/2", "iq");
+        nb(mdl, "rate", "dipmax", "RisingSlewLimit", "ap.gen.dipmax", "FallingSlewLimit", "-1e6");
+        nb(mdl, "tf", "Tg ip", "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
+        nb(mdl, "rate", "diqmax", "RisingSlewLimit", "ap.gen.diqmax", "FallingSlewLimit", "-ap.gen.diqmax");
+        nb(mdl, "tf", "Tg iq", "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
+        rowsG = {
+            [stg("@ip_cmd", 0), stg("dipmax"), stg("Tg ip"), stg(">ip")]
+            [stg("@iq_cmd", 0), stg("diqmax"), stg("Tg iq"), stg(">iq")]
+            rowGen};
+        gTitle = "Generator system (IEC 61400-27-1 Type 4)";
     else
         % WECC REGC_A: Ip recovery ramp Rrpwr, Iq ramps Iqrmax/Iqrmin, lag Tg;
         % low voltage active current management (LVACM) and low voltage
         % power logic (LVPL, static, on the unfiltered voltage)
-        add_block("simulink/Discontinuities/Rate Limiter", mdl + "/Rrpwr", "Position", [0 0 40 30], ...
-            "RisingSlewLimit", "ap.gen.Rrpwr", "FallingSlewLimit", "-1e6");
-        add_block("simulink/Continuous/Transfer Fcn", mdl + "/Tg ip", "Position", [0 0 70 34], ...
-            "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
-        add_block("simulink/Discontinuities/Rate Limiter", mdl + "/Iqrmax", "Position", [0 0 40 30], ...
-            "RisingSlewLimit", "ap.gen.Iqrmax", "FallingSlewLimit", "ap.gen.Iqrmin");
-        add_block("simulink/Continuous/Transfer Fcn", mdl + "/Tg iq", "Position", [0 0 70 34], ...
-            "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
+        nb(mdl, "rate", "Rrpwr", "RisingSlewLimit", "ap.gen.Rrpwr", "FallingSlewLimit", "-1e6");
+        nb(mdl, "tf", "Tg ip", "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
+        nb(mdl, "rate", "Iqrmax", "RisingSlewLimit", "ap.gen.Iqrmax", "FallingSlewLimit", "ap.gen.Iqrmin");
+        nb(mdl, "tf", "Tg iq", "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
         lv = [
             "v = sqrt(V_re^2 + V_im^2);"
             "g = ap.gen;"
@@ -754,62 +733,29 @@ function buildAsset(type, folder)
             "% LVACM: Ip scaled to 0 between Lvpnt1 and Lvpnt0"
             "k = min(max((v - g.Lvpnt0) / (g.Lvpnt1 - g.Lvpnt0), 0), 1);"
             "ip_out = k * ip_l;"];
-        addMatlabFunction(mdl + "/LVPL LVACM", "lvpl_lvacm", ["ip", "V_re", "V_im"], "ip_out", lv, "ap", [0 0 110 70]);
-        rowFrom(mdl, "ctrl/1", ["Rrpwr", "Tg ip"], "ip_cmd", 30);
-        rowFrom(mdl, "ctrl/2", ["Iqrmax", "Tg iq"], "iq_cmd", 30);
-        tp = get_param(mdl + "/Tg ip", "Position");
-        place(mdl + "/LVPL LVACM", tp(3) + 30, portY(mdl + "/Tg ip", "out", 1) + 20);
-        ln(mdl, "Tg ip/1", "LVPL LVACM/1", "");
-        ln(mdl, "LVPL LVACM/1", "generator/1", "ip");
-        ln(mdl, "Tg iq/1", "generator/2", "iq");
-        lp = get_param(mdl + "/LVPL LVACM", "Position");
-        for j = 1:2
-            vn = ["V_re", "V_im"]; f = addFrom(mdl, vn(j), green);
-            place(mdl + "/" + f, lp(1) - 70, portY(mdl + "/LVPL LVACM", "in", j + 1));
-            ln(mdl, f + "/1", "LVPL LVACM/" + (j + 1), "");
-        end
+        addMatlabFunction(mdl + "/LVPL LVACM", "lvpl_lvacm", ["ip", "V_re", "V_im"], "ip_out", lv, "ap", [0 0 110 100]);
+        rowsG = {
+            [stg("@ip_cmd", 0), stg("Rrpwr"), stg("Tg ip"), stg("LVPL LVACM", 1, {2, "@V_re"; 3, "@V_im"}), stg(">ip")]
+            [stg("@iq_cmd", 0), stg("Iqrmax"), stg("Tg iq"), stg(">iq")]
+            rowGen};
+        gTitle = "Converter (WECC REGC_A)";
     end
-    rowInto(mdl, "generator/3", addFrom(mdl, "V_re", green), "", 30);
-    rowInto(mdl, "generator/4", addFrom(mdl, "V_im", green), "", 30);
-    % P_avail from the controller: Goto right next to it, out at the right
-    rowFrom(mdl, "ctrl/3", addGoto(mdl, "P_avail", orange), "P_avail", 30);
+    [y, h3, r3] = ctrlSection(mdl, gTitle, rowsG, x, y, cm, areaColor("asset"));
+    hMid = [h1 h2 h3];  rMax = max([r1 r2 r3]);
 
-    % outports: 1 P, 2 Q, 3 P_avail, 4 I_re, 5 I_im, 6 SOC (BESS)
-    for j = 1:4
-        names = ["P", "Q", "I_re", "I_im"];  ports = [1 2 4 5];
-        add_block("simulink/Sinks/Out1", mdl + "/" + names(j), "Port", num2str(ports(j)), "Position", [0 0 30 14]);
-        rowFrom(mdl, "generator/" + j, names(j), names(j), 160);
-    end
-    for s = ["P", "Q"]   % also to the measurement memories (branch to a Goto)
-        gp = get_param(mdl + "/" + s, "Position");
-        g = addGoto(mdl, s, orange);
-        place(mdl + "/" + g, gp(1) - 110, gp(2) + 40);
-        ln(mdl, "generator/" + find(["P", "Q"] == s), g + "/1", "");
-    end
-    add_block("simulink/Sinks/Out1", mdl + "/P_avail", "Port", "3", "Position", [0 0 30 14]);
-    gp = get_param(mdl + "/I_im", "Position");
-    f = addFrom(mdl, "P_avail", orange);
-    place(mdl + "/" + f, gp(1) - 140, gp(2) + 80);
-    rowFrom(mdl, f + "/1", "P_avail", "", 40);
-
-    if type == "BESS"
+    if isB
         % battery energy: dSOC/dt = -kSOC * P  (P in pu, + = discharge)
-        add_block("simulink/Math Operations/Gain", mdl + "/kSOC", "Gain", "-ap.kSOC", "Position", [0 0 60 30]);
-        add_block("simulink/Continuous/Integrator", mdl + "/SOC int", "InitialCondition", "ap.SOC0", "Position", [0 0 30 30]);
-        f = addFrom(mdl, "P", orange);
-        place(mdl + "/" + f, gp(1) - 420, gp(2) + 150);
-        rowFrom(mdl, f + "/1", ["kSOC", "SOC int"], "", 40);
-        add_block("simulink/Sinks/Out1", mdl + "/SOC", "Port", "6", "Position", [0 0 30 14]);
-        rowFrom(mdl, "SOC int/1", "SOC", "SOC", 140);
-        g = addGoto(mdl, "SOC", orange);       % place first, then draw the branch
-        sp2 = get_param(mdl + "/SOC", "Position");
-        place(mdl + "/" + g, sp2(1) - 90, sp2(2) + 45);
-        ln(mdl, "SOC int/1", g + "/1", "");
+        nb(mdl, "gain", "kSOC", "Gain", "-ap.kSOC");
+        nb(mdl, "int", "SOC int", "InitialCondition", "ap.SOC0");
+        rowsB = {[stg("@P", 0), stg("kSOC"), stg("SOC int"), stg(">SOC")]};
+        [~, h4, r4] = ctrlSection(mdl, "Battery energy", rowsB, x, y, cm, areaColor("asset"));
+        hMid(end+1) = h4;  rMax = max(rMax, r4);
     end
-    % outports were created out of order; set the final numbers explicitly
-    outOrder = ["P", "Q", "P_avail", "I_re", "I_im"];
-    if type == "BESS", outOrder(end+1) = "SOC"; end
-    renumberPorts(mdl, outOrder);
+
+    outs = ["P", "Q", "P_avail", "I_re", "I_im"];
+    if isB, outs(end+1) = "SOC"; end
+    hOut = ctrlOutputs(mdl, outs, "@" + outs, rMax + 110, cm);
+    alignColumns(hIn, hMid, hOut);
     save_system(mdl, fullfile(folder, mdl + ".slx"));
     close_system(mdl);
     registerInProject(fullfile(folder, mdl + ".slx"));
@@ -1306,109 +1252,349 @@ function chain(sys, src, steps, dst, label, outName)
 end
 
 %% ===================================================================
-%  WT_ctrl template: IEC 61400-27-1 Type 4A control as a block diagram
-%  (stage 3). Structure after IEC 61400-27-1 (measurement, P control type
-%  4A, Q control, current limitation); block details and parameter values
-%  to be checked against the standard. Ports unchanged:
+%  Controller diagram layout (asset and plant controller templates)
+%
+%  Every controller is drawn in three columns of areas:
+%    inputs (Inport -> Goto) | function areas, stacked | outputs (From -> Outport)
+%  Inside a function area each signal path is one straight row, built by
+%  rowChain: blocks left to right, each block's input aligned with the
+%  previous block's output; other inputs come from local From blocks or
+%  parameter constants placed directly left of their port; a row ends in
+%  a Goto. Signals used in several rows are passed with Goto/From
+%  (blue: references and orders, green: measurements, orange: internal).
+%  ===================================================================
+function st = stg(blk, ip, sides, outs)
+    % One stage of a row: block blk with main input port ip (0: none).
+    % sides = {port, src; ...}: src "@Tag" is a From, otherwise the name of
+    % an existing block (a constant) placed left of the port.
+    % outs = {port, tag; ...}: further outputs to Gotos.
+    % blk "@Tag" creates a From (row start), ">Tag" a Goto (row end).
+    if nargin < 2, ip = 1; end
+    if nargin < 3, sides = {}; end
+    if nargin < 4, outs = {}; end
+    st = struct("blk", string(blk), "ip", ip, "sides", {sides}, "outs", {outs});
+end
+
+function [bottom, right, blks] = rowChain(sys, x, yTop, stages, cm)
+    % Place one row of stages (see stg) with its top at yTop, starting at x;
+    % returns the lowest edge, the right edge and all blocks of the row
+    n = numel(stages);
+    names = strings(1, n);  sideNames = cell(1, n);  outNames = cell(1, n);
+    blks = strings(0);
+    y = 0;  xc = x;
+    for i = 1:n
+        st = stages(i);  b = st.blk;
+        if startsWith(b, "@")
+            t = extractAfter(b, 1);  b = addFrom(sys, t, tagColor(cm, t));
+        elseif startsWith(b, ">")
+            t = extractAfter(b, 1);  b = addGoto(sys, t, tagColor(cm, t));
+        end
+        names(i) = b;  full = sys + "/" + b;
+        sb = strings(1, size(st.sides, 1));  wmax = 0;
+        for j = 1:size(st.sides, 1)
+            s = string(st.sides{j, 2});
+            if startsWith(s, "@")
+                t = extractAfter(s, 1);  s = addFrom(sys, t, tagColor(cm, t));
+            end
+            sb(j) = s;
+            p = get_param(sys + "/" + s, "Position");  wmax = max(wmax, p(3) - p(1));
+        end
+        gap = 35;
+        if wmax > 0, gap = wmax + 50; end
+        if i == 1, gap = 0; end
+        p = get_param(full, "Position");  w = p(3) - p(1);  h = p(4) - p(2);
+        xl = xc + gap;
+        set_param(full, "Position", [xl, 0, xl + w, h]);
+        if st.ip > 0
+            dy = y - portY(full, "in", st.ip);
+        else
+            dy = y - portY(full, "out", 1);
+        end
+        set_param(full, "Position", [xl, dy, xl + w, dy + h]);
+        for j = 1:numel(sb)
+            sp = get_param(sys + "/" + sb(j), "Position");  sw = sp(3) - sp(1);  shh = sp(4) - sp(2);
+            yc = portY(full, "in", st.sides{j, 1});
+            set_param(sys + "/" + sb(j), "Position", round([xl - 20 - sw, yc - shh/2, xl - 20, yc + shh/2]));
+        end
+        ob = strings(1, size(st.outs, 1));
+        for j = 1:size(st.outs, 1)
+            t = string(st.outs{j, 2});
+            ob(j) = addGoto(sys, t, tagColor(cm, t));
+            gp = get_param(sys + "/" + ob(j), "Position");
+            yc = portY(full, "out", st.outs{j, 1});
+            set_param(sys + "/" + ob(j), "Position", round([xl + w + 30, yc - (gp(4)-gp(2))/2, ...
+                xl + w + 30 + gp(3) - gp(1), yc + (gp(4)-gp(2))/2]));
+        end
+        sideNames{i} = sb;  outNames{i} = ob;
+        ph = get_param(full, "PortHandles");
+        if ~isempty(ph.Outport), y = portY(full, "out", 1); end
+        xc = xl + w;
+        blks = [blks, b, sb, ob]; %#ok<AGROW>
+    end
+    % shift the row to its place, then draw (straight) lines
+    top = inf;  bottom = -inf;  right = -inf;
+    for b = blks
+        p = get_param(sys + "/" + b, "Position");
+        top = min(top, p(2));  bottom = max(bottom, p(4));  right = max(right, p(3));
+    end
+    d = round(yTop - top);
+    for b = blks
+        set_param(sys + "/" + b, "Position", get_param(sys + "/" + b, "Position") + [0 d 0 d]);
+    end
+    bottom = bottom + d;
+    for i = 1:n
+        st = stages(i);
+        if i > 1 && st.ip > 0
+            add_line(sys, names(i-1) + "/1", names(i) + "/" + st.ip);
+        end
+        for j = 1:numel(sideNames{i})
+            add_line(sys, sideNames{i}(j) + "/1", names(i) + "/" + st.sides{j, 1});
+        end
+        for j = 1:numel(outNames{i})
+            add_line(sys, names(i) + "/" + st.outs{j, 1}, outNames{i}(j) + "/1");
+        end
+    end
+end
+
+function [y, h, right] = ctrlSection(sys, title, rows, x, y, cm, color)
+    % Function area: rows (cell of stage arrays) stacked from y; returns the
+    % y for the next section, the area handle and the right edge
+    y = y + 40;                       % area title
+    all = strings(0);  right = -inf;
+    for r = 1:numel(rows)
+        [b, rr, bl] = rowChain(sys, x, y, rows{r}, cm);
+        y = b + 34;                   % room for block names
+        all = [all, bl]; %#ok<AGROW>
+        right = max(right, rr);
+    end
+    h = areaAround(sys, title, all, color);
+    y = y + 10;
+end
+
+function h = areaAround(sys, title, blks, color)
+    box = [inf inf -inf -inf];
+    for b = blks
+        p = get_param(sys + "/" + b, "Position");
+        box = [min(box(1), p(1)), min(box(2), p(2)), max(box(3), p(3)), max(box(4), p(4))];
+    end
+    h = add_block("built-in/Area", sys + "/" + title, "Position", box + [-15 -36 15 26]);
+    set_param(h, "BackgroundColor", color);
+end
+
+function alignColumns(hIn, hMid, hOut)
+    % inputs and outputs areas span the full height; the function areas of
+    % each column (hMid: one handle array per column) share their left and
+    % right edges, and the last area of every column ends at the same height
+    if ~iscell(hMid), hMid = {hMid}; end
+    top = inf;  bot = -inf;
+    for c = 1:numel(hMid)
+        P = cell2mat(arrayfun(@(h) get_param(h, "Position"), hMid{c}(:), "UniformOutput", false));
+        top = min(top, min(P(:, 2)));  bot = max(bot, max(P(:, 4)));
+    end
+    for c = 1:numel(hMid)
+        h = hMid{c};
+        P = cell2mat(arrayfun(@(x) get_param(x, "Position"), h(:), "UniformOutput", false));
+        l = min(P(:, 1));  r = max(P(:, 3));
+        for k = 1:numel(h)
+            b = P(k, 4);
+            if k == numel(h), b = bot; end
+            set_param(h(k), "Position", [l, P(k, 2), r, b]);
+        end
+    end
+    for h = [hIn, hOut]
+        q = get_param(h, "Position");
+        set_param(h, "Position", [q(1), top, q(3), bot]);
+    end
+end
+
+function [hIn, xMid] = ctrlInputs(sys, names, dims, cm, ts)
+    % Inport -> Goto for every input, in a column on the left (sample
+    % time ts, default "Ts")
+    if nargin < 5, ts = "Ts"; end
+    y = 40;  all = strings(0);  right = 0;
+    for k = 1:numel(names)
+        add_block("simulink/Sources/In1", sys + "/" + names(k), "Port", num2str(k), ...
+            "OutDataTypeStr", "double", "PortDimensions", dims(k), "SampleTime", ts, "Position", [0 0 30 14]);
+        [b, rr, bl] = rowChain(sys, 40, y, [stg(names(k), 0), stg(">" + names(k))], cm);
+        y = b + 34;  all = [all, bl]; %#ok<AGROW>
+        right = max(right, rr);
+    end
+    hIn = areaAround(sys, "Inputs", all, areaColor("interface"));
+    xMid = right + 90;
+end
+
+function hOut = ctrlOutputs(sys, names, srcs, x, cm)
+    % From -> Outport for every output, in a column on the right; srcs are
+    % Goto tags or names of existing source blocks
+    y = 40;  all = strings(0);
+    for k = 1:numel(names)
+        add_block("simulink/Sinks/Out1", sys + "/" + names(k), "Port", num2str(k), ...
+            "OutDataTypeStr", "double", "Position", [0 0 30 14]);
+        s = srcs(k);
+        if ~startsWith(s, "@") && getSimulinkBlockHandle(sys + "/" + s) == -1, s = "@" + s; end
+        [b, ~, bl] = rowChain(sys, x, y, [stg(s, 0), stg(names(k))], cm);
+        y = b + 34;  all = [all, bl]; %#ok<AGROW>
+    end
+    hOut = areaAround(sys, "Outputs", all, areaColor("interface"));
+end
+
+function c = tagColor(cm, tag)
+    if any(cm.ref == tag)
+        c = "[0.592 0.620 0.957]";      % blue: references, orders, commands
+    elseif any(cm.meas == tag)
+        c = "[0.122 0.816 0.510]";      % green: measurements
+    else
+        c = "[0.988 0.463 0.204]";      % orange: internal signals, flags
+    end
+end
+
+function nb(sys, kind, name, varargin)
+    % new block of a standard size (placed later by rowChain)
+    switch kind
+        case "sum",     lib = "simulink/Math Operations/Sum";            sz = [30 40];
+            varargin = [varargin, {"IconShape", "rectangular"}];
+        case "gain",    lib = "simulink/Math Operations/Gain";           sz = [50 30];
+        case "div",     lib = "simulink/Math Operations/Divide";         sz = [35 40];
+        case "minmax",  lib = "simulink/Math Operations/MinMax";         sz = [35 40];
+        case "sumel",   lib = "simulink/Math Operations/Sum of Elements"; sz = [35 30];
+        case "lag",     lib = "simulink/Discrete/Transfer Fcn First Order"; sz = [70 34];
+        case "pid",     lib = "simulink/Discrete/Discrete PID Controller"; sz = [70 80];
+        case "switch",  lib = "simulink/Signal Routing/Switch";           sz = [40 80];
+        case "sat",     lib = "simulink/Discontinuities/Saturation";      sz = [40 30];
+        case "satdyn",  lib = "simulink/Discontinuities/Saturation Dynamic"; sz = [50 80];
+        case "rate",    lib = "simulink/Discontinuities/Rate Limiter";    sz = [40 30];
+        case "dz",      lib = "simulink/Discontinuities/Dead Zone";       sz = [40 30];
+        case "rel",     lib = "simulink/Logic and Bit Operations/Relational Operator"; sz = [35 40];
+        case "or",      lib = "simulink/Logic and Bit Operations/Logical Operator";    sz = [35 40];
+        case "term",    lib = "simulink/Sinks/Terminator";                sz = [20 20];
+        case "mem",     lib = "simulink/Discrete/Memory";                 sz = [30 30];
+        case "tf",      lib = "simulink/Continuous/Transfer Fcn";         sz = [70 34];
+        case "int",     lib = "simulink/Continuous/Integrator";           sz = [30 30];
+    end
+    add_block(lib, sys + "/" + name, "Position", [0 0 sz], varargin{:});
+end
+
+function kc(sys, name, value)
+    % parameter constant (shows its value; name hidden)
+    w = max(40, 7*strlength(string(value)) + 14);
+    add_block("simulink/Sources/Constant", sys + "/" + name, "Value", value, ...
+        "Position", [0 0 w 24], "ShowName", "off");
+end
+
+function lagBlk(sys, name, T, y0)
+    % first-order lag y(k) = p*y(k-1) + (1-p)*u(k), p = 1 - Ts/T, initial output y0
+    nb(sys, "lag", name, "PoleZ", "1 - Ts/" + T, "ICPrevOutput", y0);
+end
+
+function piBlk(sys, name, Kp, Ki, lim)
+    % discrete PI with clamping anti-windup; lim "" = external limits (up, lo ports)
+    if lim == ""
+        nb(sys, "pid", name, "Controller", "PI", "P", Kp, "I", Ki, "LimitOutput", "on", ...
+            "SatLimitsSource", "external", "AntiWindupMode", "clamping", "SampleTime", "-1");
+    else
+        nb(sys, "pid", name, "Controller", "PI", "P", Kp, "I", Ki, "LimitOutput", "on", ...
+            "UpperSaturationLimit", lim, "LowerSaturationLimit", "-" + lim, ...
+            "AntiWindupMode", "clamping", "SampleTime", "-1");
+    end
+end
+
+function ctrlHeader(mdl, c, desc, withN)
+    closeIfLoaded(mdl);
+    new_system(mdl);
+    set_param(mdl, "SolverType", "Fixed-step", "Solver", "FixedStepDiscrete", ...
+        "FixedStep", "Ts", "StopTime", "inf", "Description", desc);
+    ws = get_param(mdl, "ModelWorkspace");
+    ws.DataSource = "MATLAB Code";
+    code = [
+        "% Defaults for standalone use and code generation, from HPP_parameters."
+        "% In HPP.slx the Model block passes p.ctrl." + c + ".par as the argument ""par""."
+        "pDefault = HPP_parameters();"
+        "Ts  = pDefault.ctrl." + c + ".Ts;    % [s] fixed sample time"
+        "par = pDefault.ctrl." + c + ".par;   % tunable parameters (model argument)"];
+    if withN
+        code(end+1) = "N   = numel(par.share);   % asset instances (fixed per build)";
+    end
+    code(end+1) = "clear pDefault";
+    ws.MATLABCode = char(strjoin(code, newline));
+    reload(ws);
+    set_param(mdl, "ParameterArgumentNames", "par");
+end
+
+function ctrlSave(mdl, folder)
+    save_system(mdl, fullfile(folder, mdl + ".slx"));
+    close_system(mdl);
+    registerInProject(fullfile(folder, mdl + ".slx"));
+end
+
+%% ===================================================================
+%  WT_ctrl template: IEC 61400-27-1 Type 4A control (stage 3). Structure
+%  after IEC 61400-27-1 (measurement, P control type 4A, Q control,
+%  current limitation); block details and parameter values to be checked
+%  against the standard. Ports:
 %    in  1 P_set  2 Q_set  3 V_term  4 P_meas  5 Q_meas  6 P_wind_avail
 %    out 1 ip_cmd 2 iq_cmd 3 P_avail          (pu on the asset rating)
 %  ===================================================================
 function buildWTCtrlType4A(folder)
     mdl = "WT_ctrl";
-    closeIfLoaded(mdl);
-    new_system(mdl);
-    set_param(mdl, "SolverType", "Fixed-step", "Solver", "FixedStepDiscrete", ...
-        "FixedStep", "Ts", "StopTime", "inf", "Description", ...
+    ctrlHeader(mdl, "wt", ...
         "WT asset controller: IEC 61400-27-1 Type 4A control (measurement, P control type 4A, Q control " + ...
-        "with closed-loop reactive power control (MqG) and dip current injection, current limitation). Per unit on the asset rating. Parameters: " + ...
-        "model argument par (= p.ctrl.wt.par, from p.wt.iec.ctrl). Structure after the standard; " + ...
-        "details and values to be checked against it.");
-    ws = get_param(mdl, "ModelWorkspace");
-    ws.DataSource = "MATLAB Code";
-    ws.MATLABCode = char(strjoin([
-        "% Defaults for standalone use and code generation, from HPP_parameters."
-        "% In HPP.slx the Model block passes p.ctrl.wt.par as the argument ""par""."
-        "pDefault = HPP_parameters();"
-        "Ts  = pDefault.ctrl.wt.Ts;    % [s] fixed sample time"
-        "par = pDefault.ctrl.wt.par;   % tunable parameters (model argument)"
-        "clear pDefault"], newline));
-    reload(ws);
-    set_param(mdl, "ParameterArgumentNames", "par");
-    B = @(lib, name, pos, varargin) add_block(lib, mdl + "/" + name, "Position", pos, varargin{:});
-    L = @(a, b) add_line(mdl, a, b, "autorouting", "smart");
+        "with closed-loop reactive power control (MqG) and dip current injection, current limitation). " + ...
+        "Per unit on the asset rating. Parameters: model argument par (= p.ctrl.wt.par, from " + ...
+        "p.wt.iec.ctrl). Structure after the standard; details and values to be checked against it.", false);
+    cm.ref  = ["P_set", "Q_set", "P_wind_avail", "ip_req", "iq_req", "ip_cmd", "iq_cmd"];
+    cm.meas = ["V_term", "P_meas", "Q_meas", "U", "U_floor", "Q_filt"];
+    [hIn, x] = ctrlInputs(mdl, ["P_set", "Q_set", "V_term", "P_meas", "Q_meas", "P_wind_avail"], ...
+        repmat("1", 1, 6), cm);
 
-    % ---- inports ----
-    ins = ["P_set", "Q_set", "V_term", "P_meas", "Q_meas", "P_wind_avail"];
-    yIn = [100, 400, 260, 600, 650, 160];
-    for k = 1:6
-        B("simulink/Sources/In1", ins(k), [30, yIn(k)-7, 60, yIn(k)+7], "Port", num2str(k), ...
-            "OutDataTypeStr", "double", "PortDimensions", "1", "SampleTime", "Ts");
-    end
+    % measurement
+    lagBlk(mdl, "U filt", "par.Tufilt", "1");
+    lagBlk(mdl, "P filt", "par.Tpfilt", "0");
+    lagBlk(mdl, "Q filt", "par.Tqfilt", "0");
+    kc(mdl, "Vmin", "par.Vmin");   nb(mdl, "minmax", "U floor", "Function", "max", "Inputs", "2");
+    kc(mdl, "udip", "par.udip");   nb(mdl, "rel", "dip", "Operator", "<");
+    nb(mdl, "term", "P filt unused", "ShowName", "off");   % no P loop in Type 4A
+    rowsM = {
+        [stg("@V_term", 0), stg("U filt"), stg(">U")]
+        [stg("@U", 0), stg("U floor", 1, {2, "Vmin"}), stg(">U_floor")]
+        [stg("@U", 0), stg("dip", 1, {2, "udip"}), stg(">dip")]
+        [stg("@Q_meas", 0), stg("Q filt"), stg(">Q_filt")]
+        [stg("@P_meas", 0), stg("P filt"), stg("P filt unused")]};
+    [y, h1, r1] = ctrlSection(mdl, "Measurement and dip detection", rowsM, x, 20, cm, areaColor("interface"));
 
-    % ---- measurement: first-order filters, dip detection ----
-    % first-order lag y(k) = p*y(k-1) + (1-p)*u(k), p = 1 - Ts/T, with an
-    % initial output (the voltage filter starts at 1 pu, not 0)
-    lag = @(name, T, y, y0) B("simulink/Discrete/Transfer Fcn First Order", name, [140, y-17, 230, y+17], ...
-        "PoleZ", "1 - Ts/" + T, "ICPrevOutput", y0);
-    lag("U filt", "par.Tufilt", 260, "1");  L("V_term/1", "U filt/1");
-    lag("P filt", "par.Tpfilt", 600, "0");  L("P_meas/1", "P filt/1");
-    lag("Q filt", "par.Tqfilt", 650, "0");  L("Q_meas/1", "Q filt/1");
-    B("simulink/Sinks/Terminator", "P filt unused", [270, 590, 290, 610]);   % no P loop in Type 4A
-    L("P filt/1", "P filt unused/1");
-    B("simulink/Sources/Constant", "udip", [260, 200, 330, 224], "Value", "par.udip");
-    B("simulink/Logic and Bit Operations/Relational Operator", "dip", [380, 205, 420, 255], "Operator", "<");
-    L("U filt/1", "dip/1");  L("udip/1", "dip/2");
-    B("simulink/Sources/Constant", "Vmin", [260, 300, 330, 324], "Value", "par.Vmin");
-    B("simulink/Math Operations/MinMax", "U floor", [380, 265, 420, 315], "Function", "max", "Inputs", "2");
-    L("U filt/1", "U floor/1");  L("Vmin/1", "U floor/2");
+    % P control type 4A
+    kc(mdl, "P min", "0");
+    nb(mdl, "satdyn", "P_ref limit");
+    nb(mdl, "rate", "dpmaxp4A", "RisingSlewLimit", "par.dpmaxp4A", "FallingSlewLimit", "-par.dpmaxp4A");
+    lagBlk(mdl, "Tpordp4A", "par.Tpordp4A", "0");
+    nb(mdl, "div", "p_ord to ip");
+    rowsP = {[stg("@P_set", 0), stg("P_ref limit", 2, {1, "@P_wind_avail"; 3, "P min"}), stg("dpmaxp4A"), ...
+              stg("Tpordp4A"), stg("p_ord to ip", 1, {2, "@U_floor"}), stg(">ip_req")]};
+    [y, h2, r2] = ctrlSection(mdl, "P control type 4A", rowsP, x, y, cm, areaColor("controller"));
 
-    % ---- P control type 4A ----
-    B("simulink/Sources/Constant", "zero", [140, 40, 180, 64], "Value", "0");
-    B("simulink/Discontinuities/Saturation Dynamic", "P_ref limit", [260, 60, 320, 170]);
-    L("P_wind_avail/1", "P_ref limit/1");  L("P_set/1", "P_ref limit/2");  L("zero/1", "P_ref limit/3");
-    B("simulink/Discontinuities/Rate Limiter", "dpmaxp4A", [380, 100, 430, 130], ...
-        "RisingSlewLimit", "par.dpmaxp4A", "FallingSlewLimit", "-par.dpmaxp4A");
-    L("P_ref limit/1", "dpmaxp4A/1");
-    B("simulink/Discrete/Transfer Fcn First Order", "Tpordp4A", [480, 98, 570, 132], ...
-        "PoleZ", "1 - Ts/par.Tpordp4A", "ICPrevOutput", "0");
-    L("dpmaxp4A/1", "Tpordp4A/1");
-    B("simulink/Math Operations/Divide", "p_ord to ip", [640, 100, 690, 150]);
-    L("Tpordp4A/1", "p_ord to ip/1");  L("U floor/1", "p_ord to ip/2");
+    % Q control: open loop q_ref / U plus PI (MqG = 1), dip current
+    nb(mdl, "div", "q_ref to iq");
+    nb(mdl, "sum", "iq ff + PI", "Inputs", "++");
+    nb(mdl, "sum", "q error", "Inputs", "+-");
+    kc(mdl, "MqG = 1", "double(par.MqG == 1)");  kc(mdl, "no q loop", "0");
+    nb(mdl, "switch", "q loop on?", "Criteria", "u2 ~= 0");
+    kc(mdl, "q frozen", "0");
+    nb(mdl, "switch", "freeze in dip", "Criteria", "u2 ~= 0");
+    piBlk(mdl, "kpq kiq", "par.kpq", "par.kiq", "par.imax");
+    kc(mdl, "uref0", "par.uref0");
+    nb(mdl, "sum", "uref0 - U", "Inputs", "+-");
+    nb(mdl, "gain", "Kqv", "Gain", "par.Kqv");
+    nb(mdl, "sum", "iq + dip", "Inputs", "++");
+    nb(mdl, "switch", "in dip?", "Criteria", "u2 ~= 0");
+    nb(mdl, "sat", "iqH1", "UpperLimit", "par.iqH1", "LowerLimit", "-par.iqH1");
+    rowsQ = {
+        [stg("@Q_set", 0), stg("q_ref to iq", 1, {2, "@U_floor"}), stg("iq ff + PI", 1, {2, "@iq_PI"}), stg(">iq_ol")]
+        [stg("@Q_set", 0), stg("q error", 1, {2, "@Q_filt"}), stg("q loop on?", 1, {2, "MqG = 1"; 3, "no q loop"}), ...
+         stg("freeze in dip", 3, {1, "q frozen"; 2, "@dip"}), stg("kpq kiq"), stg(">iq_PI")]
+        [stg("@U", 0), stg("uref0 - U", 2, {1, "uref0"}), stg("Kqv"), stg("iq + dip", 2, {1, "@iq_ol"}), ...
+         stg("in dip?", 1, {2, "@dip"; 3, "@iq_ol"}), stg("iqH1"), stg(">iq_req")]};
+    [y, h3, r3] = ctrlSection(mdl, "Q control (MqG 1 closed loop, 2 open loop) and dip current", rowsQ, x, y, cm, areaColor("controller"));
 
-    % ---- Q control (open-loop reactive power + dip current injection) ----
-    B("simulink/Math Operations/Divide", "q_ref to iq", [640, 380, 690, 430]);
-    L("Q_set/1", "q_ref to iq/1");  L("U floor/1", "q_ref to iq/2");
-    % reactive power control mode MqG = 1: PI (kpq, kiq) on q_ref - q_filt,
-    % frozen during a dip, added to the open-loop current q_ref / U
-    % (MqG = 2: open-loop reactive power control only)
-    B("simulink/Math Operations/Sum", "q error", [380, 560, 410, 600], "Inputs", "+-");
-    L("Q_set/1", "q error/1");  L("Q filt/1", "q error/2");
-    B("simulink/Sources/Constant", "MqG = 1", [380, 620, 470, 640], "Value", "double(par.MqG == 1)");
-    B("simulink/Sources/Constant", "no q loop", [480, 520, 510, 540], "Value", "0");
-    B("simulink/Signal Routing/Switch", "q loop on?", [520, 555, 560, 615], "Criteria", "u2 ~= 0");
-    L("q error/1", "q loop on?/1");  L("MqG = 1/1", "q loop on?/2");  L("no q loop/1", "q loop on?/3");
-    B("simulink/Signal Routing/Switch", "freeze in dip", [600, 555, 640, 615], "Criteria", "u2 ~= 0");
-    L("no q loop/1", "freeze in dip/1");  L("dip/1", "freeze in dip/2");  L("q loop on?/1", "freeze in dip/3");
-    B("simulink/Discrete/Discrete PID Controller", "kpq kiq", [680, 560, 760, 610], "Controller", "PI", ...
-        "P", "par.kpq", "I", "par.kiq", "LimitOutput", "on", "UpperSaturationLimit", "par.imax", ...
-        "LowerSaturationLimit", "-par.imax", "AntiWindupMode", "clamping", "SampleTime", "-1");
-    L("freeze in dip/1", "kpq kiq/1");
-    B("simulink/Math Operations/Sum", "iq ff + PI", [710, 390, 730, 440], "Inputs", "++");
-    L("q_ref to iq/1", "iq ff + PI/1");  L("kpq kiq/1", "iq ff + PI/2");
-    B("simulink/Sources/Constant", "uref0", [260, 470, 330, 494], "Value", "par.uref0");
-    B("simulink/Math Operations/Sum", "uref0 - U", [380, 465, 410, 505], "Inputs", "+-");
-    L("uref0/1", "uref0 - U/1");  L("U filt/1", "uref0 - U/2");
-    B("simulink/Math Operations/Gain", "Kqv", [470, 470, 520, 500], "Gain", "par.Kqv");
-    L("uref0 - U/1", "Kqv/1");
-    B("simulink/Math Operations/Sum", "iq + dip", [760, 440, 790, 480], "Inputs", "++");
-    L("iq ff + PI/1", "iq + dip/1");  L("Kqv/1", "iq + dip/2");
-    B("simulink/Signal Routing/Switch", "in dip?", [850, 395, 890, 455], "Criteria", "u2 ~= 0");
-    L("iq + dip/1", "in dip?/1");  L("dip/1", "in dip?/2");  L("iq ff + PI/1", "in dip?/3");
-    B("simulink/Discontinuities/Saturation", "iqH1", [950, 410, 990, 440], ...
-        "UpperLimit", "par.iqH1", "LowerLimit", "-par.iqH1");
-    L("in dip?/1", "iqH1/1");
-
-    % ---- current limitation: P priority normally, Q priority in a dip ----
+    % current limitation
     body = [
         "% IEC 61400-27-1 current limitation (simplified): total current <= imax;"
         "% normal operation: active current first, reactive current gets the rest;"
@@ -1424,36 +1610,23 @@ function buildWTCtrlType4A(folder)
         "    iq_cmd = min(max(iq_req, -iqmax), iqmax);"
         "end"];
     addMatlabFunction(mdl + "/current limitation", "current_limitation", ["ip_req", "iq_req", "in_dip"], ...
-        ["ip_cmd", "iq_cmd"], body, "par", [1080, 100, 1240, 460]);
-    L("p_ord to ip/1", "current limitation/1");
-    L("iqH1/1", "current limitation/2");
-    L("dip/1", "current limitation/3");
+        ["ip_cmd", "iq_cmd"], body, "par", [0 0 150 110]);
+    rowsC = {[stg("@ip_req", 0), stg("current limitation", 1, {2, "@iq_req"; 3, "@dip"}, {2, "iq_cmd"}), stg(">ip_cmd")]};
+    [~, h4, r4] = ctrlSection(mdl, "Current limitation", rowsC, x, y, cm, areaColor("asset"));
 
-    % ---- outports ----
-    B("simulink/Sinks/Out1", "ip_cmd",  [1320, 153, 1350, 167], "Port", "1", "OutDataTypeStr", "double");
-    B("simulink/Sinks/Out1", "iq_cmd",  [1320, 393, 1350, 407], "Port", "2", "OutDataTypeStr", "double");
-    B("simulink/Sinks/Out1", "P_avail", [1320,  13, 1350,  27], "Port", "3", "OutDataTypeStr", "double");
-    L("current limitation/1", "ip_cmd/1");
-    L("current limitation/2", "iq_cmd/1");
-    L("P_wind_avail/1", "P_avail/1");   % Type 4A: constant aerodynamic power
-
-    % ---- role areas ----
-    addArea(mdl, "Measurement", [100, 180, 440, 340], areaColor("interface"));
-    addArea(mdl, "P control type 4A", [130, 0, 700, 175], areaColor("controller"));
-    addArea(mdl, "Q control (MqG 1 closed loop, 2 open loop) + dip current", [250, 360, 1000, 640], areaColor("controller"));
-    addArea(mdl, "Current limitation", [1050, 50, 1260, 500], areaColor("asset"));
-
-    save_system(mdl, fullfile(folder, mdl + ".slx"));
-    close_system(mdl);
-    registerInProject(fullfile(folder, mdl + ".slx"));
+    % outputs (Type 4A: constant aerodynamic power, P_avail = P_wind_avail)
+    hOut = ctrlOutputs(mdl, ["ip_cmd", "iq_cmd", "P_avail"], ["@ip_cmd", "@iq_cmd", "@P_wind_avail"], ...
+        max([r1 r2 r3 r4]) + 110, cm);
+    alignColumns(hIn, [h1 h2 h3 h4], hOut);
+    ctrlSave(mdl, folder);
 end
 
 %% ===================================================================
 %  PV_ctrl / BESS_ctrl template: WECC second-generation electrical
-%  control as a block diagram (stage 4). PV: REEC_B; BESS: REEC_C (REEC_B
-%  structure plus state-of-charge limits). Qflag = 0 (reactive current
-%  from the Q set-point), no voltage-dependent current limit (VDL), no
-%  state freeze during a dip. Ports unchanged:
+%  control (stage 4). PV: REEC_B; BESS: REEC_C (REEC_B structure plus
+%  state-of-charge limits). Qflag 1: closed-loop Q (PI), 0: open loop; no
+%  voltage-dependent current limit (VDL), no state freeze during a dip
+%  except the Q PI. Ports:
 %    in  1 P_set  2 Q_set  3 V_term  4 P_meas  5 Q_meas  6 P_pv_avail | SOC
 %    out 1 ip_cmd 2 iq_cmd 3 P_avail          (pu on the asset rating)
 %  ===================================================================
@@ -1465,113 +1638,74 @@ function buildReecCtrl(type, folder)
     else
         std = "REEC_B"; src = "P_pv_avail"; extra = "";
     end
-    closeIfLoaded(mdl);
-    new_system(mdl);
-    set_param(mdl, "SolverType", "Fixed-step", "Solver", "FixedStepDiscrete", ...
-        "FixedStep", "Ts", "StopTime", "inf", "Description", ...
+    ctrlHeader(mdl, c, ...
         type + " asset controller: WECC " + std + " electrical control (voltage filter and dip " + ...
-        "detection, P path with ramp and Tpord lag, Q path with Qflag (closed-loop Q PI) and dip current injection " + ...
-        "Kqv, current limit logic with PQflag" + extra + "). Per unit on the asset rating. " + ...
+        "detection, P path with ramp and Tpord lag, Q path with Qflag (closed-loop Q PI) and dip current " + ...
+        "injection Kqv, current limit logic with PQflag" + extra + "). Per unit on the asset rating. " + ...
         "Parameters: model argument par (= p.ctrl." + c + ".par, from p." + c + ".wecc.ctrl). " + ...
-        "Simplified; details and values to be checked against the WECC specification.");
-    ws = get_param(mdl, "ModelWorkspace");
-    ws.DataSource = "MATLAB Code";
-    ws.MATLABCode = char(strjoin([
-        "% Defaults for standalone use and code generation, from HPP_parameters."
-        "% In HPP.slx the Model block passes p.ctrl." + c + ".par as the argument ""par""."
-        "pDefault = HPP_parameters();"
-        "Ts  = pDefault.ctrl." + c + ".Ts;    % [s] fixed sample time"
-        "par = pDefault.ctrl." + c + ".par;   % tunable parameters (model argument)"
-        "clear pDefault"], newline));
-    reload(ws);
-    set_param(mdl, "ParameterArgumentNames", "par");
-    B = @(lib, name, pos, varargin) add_block(lib, mdl + "/" + name, "Position", pos, varargin{:});
-    L = @(a, b) add_line(mdl, a, b, "autorouting", "smart");
-    lag = @(name, T, pos, y0) B("simulink/Discrete/Transfer Fcn First Order", name, pos, ...
-        "PoleZ", "1 - Ts/" + T, "ICPrevOutput", y0);
+        "Simplified; details and values to be checked against the WECC specification.", false);
+    cm.ref  = ["P_set", "Q_set", "P_pv_avail", "ip_req", "iq_req", "ip_cmd", "iq_cmd"];
+    cm.meas = ["V_term", "P_meas", "Q_meas", "V", "V_floor", "SOC"];
+    [hIn, x] = ctrlInputs(mdl, ["P_set", "Q_set", "V_term", "P_meas", "Q_meas", src], repmat("1", 1, 6), cm);
 
-    % ---- inports ----
-    ins = ["P_set", "Q_set", "V_term", "P_meas", "Q_meas", src];
-    yIn = [100, 400, 260, 640, 690, 160];
-    for k = 1:6
-        B("simulink/Sources/In1", ins(k), [30, yIn(k)-7, 60, yIn(k)+7], "Port", num2str(k), ...
-            "OutDataTypeStr", "double", "PortDimensions", "1", "SampleTime", "Ts");
-    end
-    B("simulink/Sinks/Terminator", "P_meas unused", [140, 630, 160, 650]);   % no P loop in REEC_B/C
-    L("P_meas/1", "P_meas unused/1");
+    % voltage filter and dip detection
+    lagBlk(mdl, "Vt filt", "par.Trv", "1");
+    kc(mdl, "Vmin", "par.Vmin");  nb(mdl, "minmax", "V floor", "Function", "max", "Inputs", "2");
+    kc(mdl, "Vdip", "par.Vdip");  nb(mdl, "rel", "V < Vdip", "Operator", "<");
+    kc(mdl, "Vup", "par.Vup");    nb(mdl, "rel", "V > Vup", "Operator", ">");
+    nb(mdl, "or", "Voltage_dip", "Operator", "OR");
+    nb(mdl, "term", "P_meas unused", "ShowName", "off");   % no P loop in REEC_B/C
+    rowsM = {
+        [stg("@V_term", 0), stg("Vt filt"), stg(">V")]
+        [stg("@V", 0), stg("V floor", 1, {2, "Vmin"}), stg(">V_floor")]
+        [stg("@V", 0), stg("V > Vup", 1, {2, "Vup"}), stg(">V_high")]
+        [stg("@V", 0), stg("V < Vdip", 1, {2, "Vdip"}), stg("Voltage_dip", 1, {2, "@V_high"}), stg(">dip")]
+        [stg("@P_meas", 0), stg("P_meas unused")]};
+    [y, h1, r1] = ctrlSection(mdl, "Voltage filter and dip detection", rowsM, x, 20, cm, areaColor("interface"));
 
-    % ---- voltage filter Trv, dip detection (V < Vdip or V > Vup) ----
-    lag("Vt filt", "par.Trv", [140, 243, 230, 277], "1");  L("V_term/1", "Vt filt/1");
-    B("simulink/Sources/Constant", "Vdip", [260, 190, 330, 210], "Value", "par.Vdip");
-    B("simulink/Logic and Bit Operations/Relational Operator", "V < Vdip", [380, 190, 420, 230], "Operator", "<");
-    L("Vt filt/1", "V < Vdip/1");  L("Vdip/1", "V < Vdip/2");
-    B("simulink/Sources/Constant", "Vup", [260, 230, 330, 250], "Value", "par.Vup");
-    B("simulink/Logic and Bit Operations/Relational Operator", "V > Vup", [380, 240, 420, 280], "Operator", ">");
-    L("Vt filt/1", "V > Vup/1");  L("Vup/1", "V > Vup/2");
-    B("simulink/Logic and Bit Operations/Logical Operator", "Voltage_dip", [470, 210, 500, 260], "Operator", "OR");
-    L("V < Vdip/1", "Voltage_dip/1");  L("V > Vup/1", "Voltage_dip/2");
-    B("simulink/Sources/Constant", "Vmin", [260, 300, 330, 320], "Value", "par.Vmin");
-    B("simulink/Math Operations/MinMax", "V floor", [380, 290, 420, 330], "Function", "max", "Inputs", "2");
-    L("Vt filt/1", "V floor/1");  L("Vmin/1", "V floor/2");
-
-    % ---- P path: limits, ramp dPmax/dPmin, Tpord, Ipcmd = Pord / V ----
+    % P path
     if isB
-        B("simulink/Sources/Constant", "Pmax", [140, 130, 190, 150], "Value", "par.Pmax");
-        B("simulink/Sources/Constant", "Pmin", [140, 40, 190, 60], "Value", "-par.Pmax");
-        upSrc = "Pmax/1";
+        kc(mdl, "Pmax", "par.Pmax");  kc(mdl, "Pmin", "-par.Pmax");  up = "Pmax";
     else
-        B("simulink/Sources/Constant", "Pmin", [140, 40, 190, 60], "Value", "0");
-        upSrc = src + "/1";
+        kc(mdl, "Pmin", "0");  up = "@P_pv_avail";
     end
-    B("simulink/Discontinuities/Saturation Dynamic", "Pmax Pmin", [260, 60, 320, 170]);
-    L(upSrc, "Pmax Pmin/1");  L("P_set/1", "Pmax Pmin/2");  L("Pmin/1", "Pmax Pmin/3");
-    B("simulink/Discontinuities/Rate Limiter", "dPmax dPmin", [380, 100, 430, 130], ...
-        "RisingSlewLimit", "par.dPmax", "FallingSlewLimit", "par.dPmin");
-    L("Pmax Pmin/1", "dPmax dPmin/1");
-    lag("Tpord", "par.Tpord", [480, 98, 570, 132], "0");
-    L("dPmax dPmin/1", "Tpord/1");
-    B("simulink/Math Operations/Divide", "Pord to Ip", [640, 100, 690, 150]);
-    L("Tpord/1", "Pord to Ip/1");  L("V floor/1", "Pord to Ip/2");
+    nb(mdl, "satdyn", "Pmax Pmin");
+    nb(mdl, "rate", "dPmax dPmin", "RisingSlewLimit", "par.dPmax", "FallingSlewLimit", "par.dPmin");
+    lagBlk(mdl, "Tpord", "par.Tpord", "0");
+    nb(mdl, "div", "Pord to Ip");
+    rowsP = {[stg("@P_set", 0), stg("Pmax Pmin", 2, {1, up; 3, "Pmin"}), stg("dPmax dPmin"), stg("Tpord"), ...
+              stg("Pord to Ip", 1, {2, "@V_floor"}), stg(">ip_req")]};
+    [y, h2, r2] = ctrlSection(mdl, "P path", rowsP, x, y, cm, areaColor("controller"));
 
-    % ---- Q path (Qflag = 0): Iq = Qext / V, lag Tiq; Iqinj in a dip ----
-    B("simulink/Math Operations/Divide", "Qext to Iq", [380, 380, 430, 430]);
-    L("Q_set/1", "Qext to Iq/1");  L("V floor/1", "Qext to Iq/2");
-    % Qflag = 1: PI (Kqp, Kqi) on Q_set - Q_gen, frozen during a dip, added
-    % to the open-loop current Qext / V (Qflag = 0: open loop only)
-    B("simulink/Math Operations/Sum", "Q error", [380, 600, 410, 640], "Inputs", "+-");
-    L("Q_set/1", "Q error/1");  L("Q_meas/1", "Q error/2");
-    B("simulink/Sources/Constant", "Qflag", [380, 660, 430, 680], "Value", "par.Qflag");
-    B("simulink/Sources/Constant", "no Q loop", [450, 560, 480, 580], "Value", "0");
-    B("simulink/Signal Routing/Switch", "Q loop on?", [480, 600, 520, 660], "Criteria", "u2 ~= 0");
-    L("Q error/1", "Q loop on?/1");  L("Qflag/1", "Q loop on?/2");  L("no Q loop/1", "Q loop on?/3");
-    B("simulink/Signal Routing/Switch", "freeze in dip", [560, 600, 600, 660], "Criteria", "u2 ~= 0");
-    L("no Q loop/1", "freeze in dip/1");  L("Voltage_dip/1", "freeze in dip/2");  L("Q loop on?/1", "freeze in dip/3");
-    B("simulink/Discrete/Discrete PID Controller", "Kqp Kqi", [640, 605, 720, 655], "Controller", "PI", ...
-        "P", "par.Kqp", "I", "par.Kqi", "LimitOutput", "on", "UpperSaturationLimit", "par.Imax", ...
-        "LowerSaturationLimit", "-par.Imax", "AntiWindupMode", "clamping", "SampleTime", "-1");
-    L("freeze in dip/1", "Kqp Kqi/1");
-    B("simulink/Math Operations/Sum", "ff + PI", [445, 385, 465, 435], "Inputs", "++");
-    L("Qext to Iq/1", "ff + PI/1");  L("Kqp Kqi/1", "ff + PI/2");
-    lag("Tiq", "par.Tiq", [490, 388, 570, 422], "0");
-    L("ff + PI/1", "Tiq/1");
-    B("simulink/Sources/Constant", "Vref0", [260, 480, 330, 500], "Value", "par.Vref0");
-    B("simulink/Math Operations/Sum", "Vref0 - V", [380, 470, 410, 510], "Inputs", "+-");
-    L("Vref0/1", "Vref0 - V/1");  L("Vt filt/1", "Vref0 - V/2");
-    B("simulink/Discontinuities/Dead Zone", "dbd1 dbd2", [450, 475, 500, 505], ...
-        "LowerValue", "par.dbd1", "UpperValue", "par.dbd2");
-    L("Vref0 - V/1", "dbd1 dbd2/1");
-    B("simulink/Math Operations/Gain", "Kqv", [530, 475, 570, 505], "Gain", "par.Kqv");
-    L("dbd1 dbd2/1", "Kqv/1");
-    B("simulink/Discontinuities/Saturation", "Iqh1 Iql1", [610, 475, 650, 505], ...
-        "UpperLimit", "par.Iqh1", "LowerLimit", "par.Iql1");
-    L("Kqv/1", "Iqh1 Iql1/1");
-    B("simulink/Sources/Constant", "no Iqinj", [610, 530, 650, 550], "Value", "0");
-    B("simulink/Signal Routing/Switch", "Iqinj in dip", [700, 470, 740, 550], "Criteria", "u2 ~= 0");
-    L("Iqh1 Iql1/1", "Iqinj in dip/1");  L("Voltage_dip/1", "Iqinj in dip/2");  L("no Iqinj/1", "Iqinj in dip/3");
-    B("simulink/Math Operations/Sum", "Iq + Iqinj", [800, 400, 830, 440], "Inputs", "++");
-    L("Tiq/1", "Iq + Iqinj/1");  L("Iqinj in dip/1", "Iq + Iqinj/2");
+    % Q path: Qext / V plus PI (Qflag = 1), lag Tiq, reactive current injection in a dip
+    nb(mdl, "div", "Qext to Iq");
+    nb(mdl, "sum", "ff + PI", "Inputs", "++");
+    lagBlk(mdl, "Tiq", "par.Tiq", "0");
+    nb(mdl, "sum", "Q error", "Inputs", "+-");
+    kc(mdl, "Qflag", "par.Qflag");  kc(mdl, "no Q loop", "0");
+    nb(mdl, "switch", "Q loop on?", "Criteria", "u2 ~= 0");
+    kc(mdl, "Q frozen", "0");
+    nb(mdl, "switch", "freeze in dip", "Criteria", "u2 ~= 0");
+    piBlk(mdl, "Kqp Kqi", "par.Kqp", "par.Kqi", "par.Imax");
+    kc(mdl, "Vref0", "par.Vref0");
+    nb(mdl, "sum", "Vref0 - V", "Inputs", "+-");
+    nb(mdl, "dz", "dbd1 dbd2", "LowerValue", "par.dbd1", "UpperValue", "par.dbd2");
+    nb(mdl, "gain", "Kqv", "Gain", "par.Kqv");
+    nb(mdl, "sat", "Iqh1 Iql1", "UpperLimit", "par.Iqh1", "LowerLimit", "par.Iql1");
+    kc(mdl, "no Iqinj", "0");
+    nb(mdl, "switch", "Iqinj in dip", "Criteria", "u2 ~= 0");
+    nb(mdl, "sum", "Iq + Iqinj", "Inputs", "++");
+    rowsQ = {
+        [stg("@Q_set", 0), stg("Qext to Iq", 1, {2, "@V_floor"}), stg("ff + PI", 1, {2, "@iq_PI"}), stg("Tiq"), ...
+         stg("Iq + Iqinj", 1, {2, "@iq_inj"}), stg(">iq_req")]
+        [stg("@Q_set", 0), stg("Q error", 1, {2, "@Q_meas"}), stg("Q loop on?", 1, {2, "Qflag"; 3, "no Q loop"}), ...
+         stg("freeze in dip", 3, {1, "Q frozen"; 2, "@dip"}), stg("Kqp Kqi"), stg(">iq_PI")]
+        [stg("@V", 0), stg("Vref0 - V", 2, {1, "Vref0"}), stg("dbd1 dbd2"), stg("Kqv"), stg("Iqh1 Iql1"), ...
+         stg("Iqinj in dip", 1, {2, "@dip"; 3, "no Iqinj"}), stg(">iq_inj")]};
+    [y, h3, r3] = ctrlSection(mdl, "Q path (Qflag 1 closed loop, 0 open loop) and reactive current injection", ...
+        rowsQ, x, y, cm, areaColor("controller"));
 
-    % ---- current limit logic ----
+    % current limit logic
     body = [
         "% WECC current limit logic (without VDL tables): |I| <= Imax;"
         "% PQflag = 0: Q priority, PQflag = 1: P priority."];
@@ -1595,44 +1729,30 @@ function buildReecCtrl(type, folder)
         "    iqmax  = sqrt(max(Imax^2 - ip_cmd^2, 0));"
         "    iq_cmd = min(max(iq_req, -iqmax), iqmax);"
         "end"];
-    cin = ["ip_req", "iq_req"];
-    if isB, cin(end+1) = "SOC"; end
+    cin = ["ip_req", "iq_req"];  sides = {2, "@iq_req"};
+    if isB, cin(end+1) = "SOC"; sides(end+1, :) = {3, "@SOC"}; end
     addMatlabFunction(mdl + "/current limit logic", "current_limit_logic", cin, ...
-        ["ip_cmd", "iq_cmd"], body, "par", [900, 100, 1060, 460]);
-    L("Pord to Ip/1", "current limit logic/1");
-    L("Iq + Iqinj/1", "current limit logic/2");
-    if isB, L("SOC/1", "current limit logic/3"); end
+        ["ip_cmd", "iq_cmd"], body, "par", [0 0 150 40*numel(cin) + 20]);
+    rowsC = {[stg("@ip_req", 0), stg("current limit logic", 1, sides, {2, "iq_cmd"}), stg(">ip_cmd")]};
+    [~, h4, r4] = ctrlSection(mdl, "Current limit logic", rowsC, x, y, cm, areaColor("asset"));
 
-    % ---- outports ----
-    B("simulink/Sinks/Out1", "ip_cmd",  [1140, 153, 1170, 167], "Port", "1", "OutDataTypeStr", "double");
-    B("simulink/Sinks/Out1", "iq_cmd",  [1140, 393, 1170, 407], "Port", "2", "OutDataTypeStr", "double");
-    B("simulink/Sinks/Out1", "P_avail", [1140,  13, 1170,  27], "Port", "3", "OutDataTypeStr", "double");
-    L("current limit logic/1", "ip_cmd/1");
-    L("current limit logic/2", "iq_cmd/1");
+    % outputs: P_avail = available PV power, or the BESS converter limit
     if isB
-        L("Pmax/1", "P_avail/1");          % BESS: converter power limit
+        kc(mdl, "Pmax out", "par.Pmax");  pa = "Pmax out";
     else
-        L(src + "/1", "P_avail/1");        % PV: available power
+        pa = "@P_pv_avail";
     end
-
-    % ---- role areas ----
-    addArea(mdl, "Voltage filter and dip detection", [100, 180, 520, 340], areaColor("interface"));
-    addArea(mdl, "P path", [130, 0, 700, 175], areaColor("controller"));
-    addArea(mdl, "Q path (Qflag 1 closed loop, 0 open loop) and reactive current injection", [350, 360, 850, 700], areaColor("controller"));
-    addArea(mdl, "Current limit logic", [880, 50, 1080, 500], areaColor("asset"));
-
-    save_system(mdl, fullfile(folder, mdl + ".slx"));
-    close_system(mdl);
-    registerInProject(fullfile(folder, mdl + ".slx"));
+    hOut = ctrlOutputs(mdl, ["ip_cmd", "iq_cmd", "P_avail"], ["@ip_cmd", "@iq_cmd", pa], max([r1 r2 r3 r4]) + 110, cm);
+    alignColumns(hIn, [h1 h2 h3 h4], hOut);
+    ctrlSave(mdl, folder);
 end
 
 %% ===================================================================
-%  WPPC / SPPC / BESSC template: WECC REPC_A plant controller as a block
-%  diagram, closing its own loops on the plant feeder into the 33 kV
-%  busbar (vendor-style plant controller under the HPPC). P path with
-%  frequency droop and PI (Frqflag), Q / V path with PI (RefFlag), then
-%  dispatch over the N assets. P and Q references are fed forward around
-%  the PI controllers. Ports:
+%  WPPC / SPPC / BESSC template: WECC REPC_A plant controller, closing its
+%  own loops on the plant feeder into the 33 kV busbar (vendor-style plant
+%  controller under the HPPC): P with frequency droop and PI (Frqflag),
+%  Q or V with PI (RefFlag), references fed forward, then dispatch over
+%  the N assets. Ports:
 %    in  1 P_set 2 Q_set 3 P_meas 4 Q_meas 5 V_meas 6 P_avail_k [7 SOC_k] last f_meas
 %    out 1 P_set_k 2 Q_set_k 3 P_avail 4 P_plant 5 Q_plant
 %        [6 P_chg_max 7 P_dis_max 8 SOC]       (pu on the plant rating)
@@ -1641,51 +1761,30 @@ function buildPlantCtrlRepc(name, folder)
     mdl = string(name);
     isB = mdl == "BESSC";
     c = lower(mdl);
-    closeIfLoaded(mdl);
-    new_system(mdl);
-    set_param(mdl, "SolverType", "Fixed-step", "Solver", "FixedStepDiscrete", ...
-        "FixedStep", "Ts", "StopTime", "inf", "Description", ...
+    ctrlHeader(mdl, c, ...
         mdl + " plant controller: WECC REPC_A structure (P control with frequency droop and PI, Q or " + ...
         "voltage control with PI, references fed forward), closed loop on the plant feeder into the 33 kV " + ...
         "busbar, then dispatch over the N assets by availability. Per unit on the plant rating. " + ...
-        "Parameters: model argument par (= p.ctrl." + c + ".par, from p.pc." + c + ").");
-    ws = get_param(mdl, "ModelWorkspace");
-    ws.DataSource = "MATLAB Code";
-    ws.MATLABCode = char(strjoin([
-        "% Defaults for standalone use and code generation, from HPP_parameters."
-        "% In HPP.slx the Model block passes p.ctrl." + c + ".par as the argument ""par""."
-        "pDefault = HPP_parameters();"
-        "Ts  = pDefault.ctrl." + c + ".Ts;    % [s] fixed sample time"
-        "par = pDefault.ctrl." + c + ".par;   % tunable parameters (model argument)"
-        "N   = numel(par.share);   % asset instances (fixed per build)"
-        "clear pDefault"], newline));
-    reload(ws);
-    set_param(mdl, "ParameterArgumentNames", "par");
-    B = @(lib, nm, pos, varargin) add_block(lib, mdl + "/" + nm, "Position", pos, varargin{:});
-    L = @(a, b) add_line(mdl, a, b, "autorouting", "smart");
-    lag = @(nm, T, pos, y0) B("simulink/Discrete/Transfer Fcn First Order", nm, pos, ...
-        "PoleZ", "1 - Ts/" + T, "ICPrevOutput", y0);
-    pid = @(nm, Kp, Ki, pos) B("simulink/Discrete/Discrete PID Controller", nm, pos, ...
-        "Controller", "PI", "P", Kp, "I", Ki, "LimitOutput", "on", "SatLimitsSource", "external", ...
-        "AntiWindupMode", "clamping", "SampleTime", "-1");
-    K = @(nm, v, pos) B("simulink/Sources/Constant", nm, pos, "Value", v);
-    S = @(nm, signs, pos) B("simulink/Math Operations/Sum", nm, pos, "Inputs", signs);
-    X = 140:120:2000;   % column x positions
-
-    % ---- inports ----
+        "Parameters: model argument par (= p.ctrl." + c + ".par, from p.pc." + c + ").", true);
+    cm.ref  = ["P_set", "Q_set", "P_ref", "P_ord", "Q_ord", "P_set_k", "Q_set_k", "Q_ff"];
+    cm.meas = ["P_meas", "Q_meas", "V_meas", "f_meas", "P_avail_k", "SOC_k", "P_filt", "Q_filt", "V_filt", ...
+               "P_avail", "P_chg_max", "P_dis_max", "SOC"];
     ins = ["P_set", "Q_set", "P_meas", "Q_meas", "V_meas", "P_avail_k"];
-    yIn = [120, 470, 300, 560, 660, 820];
     dimsIn = ["1", "1", "1", "1", "1", "N"];
-    if isB
-        ins(end+1) = "SOC_k"; yIn(end+1) = 900; dimsIn(end+1) = "N";
-    end
-    ins(end+1) = "f_meas"; yIn(end+1) = 200; dimsIn(end+1) = "1";
-    for k = 1:numel(ins)
-        B("simulink/Sources/In1", ins(k), [30, yIn(k)-7, 60, yIn(k)+7], "Port", num2str(k), ...
-            "OutDataTypeStr", "double", "PortDimensions", dimsIn(k), "SampleTime", "Ts");
-    end
+    if isB, ins(end+1) = "SOC_k"; dimsIn(end+1) = "N"; end
+    ins(end+1) = "f_meas"; dimsIn(end+1) = "1";
+    [hIn, x] = ctrlInputs(mdl, ins, dimsIn, cm);
 
-    % ---- availability and P limits ----
+    % measurements and availability / P limits
+    lagBlk(mdl, "P filt", "par.Tp", "0");
+    lagBlk(mdl, "Q filt", "par.Tfltr", "0");
+    lagBlk(mdl, "V filt", "par.Tfltr", "1");
+    nb(mdl, "sumel", "P_avail sum");
+    rowsM = {
+        [stg("@P_meas", 0), stg("P filt"), stg(">P_filt")]
+        [stg("@Q_meas", 0), stg("Q filt"), stg(">Q_filt")]
+        [stg("@V_meas", 0), stg("V filt"), stg(">V_filt")]
+        [stg("@P_avail_k", 0), stg("P_avail sum"), stg(">P_avail")]};
     if isB
         body = [
             "% plant charge / discharge limits: only assets within their SOC range"
@@ -1695,100 +1794,92 @@ function buildPlantCtrlRepc(name, folder)
             "P_chg_max = sum(chg);"
             "SOC = sum(par.share .* SOC_k);"];
         addMatlabFunction(mdl + "/BESS limits", "bess_limits", ["P_avail_k", "SOC_k"], ...
-            ["P_chg_max", "P_dis_max", "SOC"], body, "par", [X(2), 800, X(2)+130, 920]);
-        L("P_avail_k/1", "BESS limits/1");  L("SOC_k/1", "BESS limits/2");
-        B("simulink/Math Operations/Gain", "charge limit", [X(3), 790, X(3)+50, 820], "Gain", "-1");
-        L("BESS limits/1", "charge limit/1");
-        upSrc = "BESS limits/2";  loSrc = "charge limit/1";
+            ["P_chg_max", "P_dis_max", "SOC"], body, "par", [0 0 140 120]);
+        nb(mdl, "gain", "charge limit", "Gain", "-1");
+        rowsM = [rowsM
+            {[stg("@P_avail_k", 0), stg("BESS limits", 1, {2, "@SOC_k"}, {2, "P_dis_max"; 3, "SOC"}), stg(">P_chg_max")]}
+            {[stg("@P_chg_max", 0), stg("charge limit"), stg(">P_lo")]}];
+        up = "P_dis_max";
     else
-        K("Pmin", "0", [X(3), 860, X(3)+40, 880]);
-        upSrc = "P_avail sum/1";  loSrc = "Pmin/1";
+        kc(mdl, "Pmin", "0");
+        rowsM = [rowsM; {[stg("Pmin", 0), stg(">P_lo")]}];
+        up = "P_avail";
     end
-    B("simulink/Math Operations/Sum of Elements", "P_avail sum", [X(2), 740, X(2)+40, 770]);
-    L("P_avail_k/1", "P_avail sum/1");
+    [y, h1, r1] = ctrlSection(mdl, "Measurements and P limits", rowsM, x, 20, cm, areaColor("interface"));
 
-    % ---- P path: frequency droop, PI on P (Frqflag), Tlag ----
-    K("Freq_ref", "par.Freq_ref", [X(1), 165, X(1)+50, 185]);
-    S("f error", "+-", [X(2), 175, X(2)+30, 215]);
-    L("Freq_ref/1", "f error/1");  L("f_meas/1", "f error/2");
-    B("simulink/Discontinuities/Dead Zone", "fdbd", [X(3), 180, X(3)+50, 210], ...
-        "LowerValue", "par.fdbd1", "UpperValue", "par.fdbd2");
-    L("f error/1", "fdbd/1");
-    B("simulink/Discontinuities/Saturation", "under-f", [X(4), 160, X(4)+40, 190], "UpperLimit", "inf", "LowerLimit", "0");
-    B("simulink/Discontinuities/Saturation", "over-f", [X(4), 210, X(4)+40, 240], "UpperLimit", "0", "LowerLimit", "-inf");
-    L("fdbd/1", "under-f/1");  L("fdbd/1", "over-f/1");
-    B("simulink/Math Operations/Gain", "Dup", [X(5), 160, X(5)+40, 190], "Gain", "par.Dup");
-    B("simulink/Math Operations/Gain", "Ddn", [X(5), 210, X(5)+40, 240], "Gain", "par.Ddn");
-    L("under-f/1", "Dup/1");  L("over-f/1", "Ddn/1");
-    S("P_set + droop", "+++", [X(6), 100, X(6)+30, 240]);
-    L("P_set/1", "P_set + droop/1");  L("Dup/1", "P_set + droop/2");  L("Ddn/1", "P_set + droop/3");
-    lag("P filt", "par.Tp", [X(1), 283, X(1)+80, 317], "0");  L("P_meas/1", "P filt/1");
-    S("P error", "+-", [X(7), 250, X(7)+30, 310]);
-    L("P_set + droop/1", "P error/1");  L("P filt/1", "P error/2");
-    B("simulink/Discontinuities/Saturation", "femax femin", [X(8), 265, X(8)+40, 295], ...
-        "UpperLimit", "par.femax", "LowerLimit", "par.femin");
-    L("P error/1", "femax femin/1");
-    S("Pmax - ref", "+-", [X(8), 330, X(8)+30, 370]);
-    S("Pmin - ref", "+-", [X(8), 390, X(8)+30, 430]);
-    L(upSrc, "Pmax - ref/1");  L("P_set + droop/1", "Pmax - ref/2");
-    L(loSrc, "Pmin - ref/1");  L("P_set + droop/1", "Pmin - ref/2");
-    pid("Kpg Kig", "par.Kpg", "par.Kig", [X(9), 260, X(9)+80, 380]);
-    L("femax femin/1", "Kpg Kig/1");  L("Pmax - ref/1", "Kpg Kig/2");  L("Pmin - ref/1", "Kpg Kig/3");
-    S("ref + PI", "++", [X(10), 160, X(10)+30, 340]);
-    L("P_set + droop/1", "ref + PI/1");  L("Kpg Kig/1", "ref + PI/2");
-    K("Frqflag", "par.Frqflag", [X(10), 60, X(10)+50, 80]);
-    B("simulink/Signal Routing/Switch", "closed loop?", [X(11), 100, X(11)+40, 180], "Criteria", "u2 ~= 0");
-    L("ref + PI/1", "closed loop?/1");  L("Frqflag/1", "closed loop?/2");  L("P_set/1", "closed loop?/3");
-    B("simulink/Discontinuities/Saturation Dynamic", "Pmax Pmin", [X(12), 100, X(12)+50, 200]);
-    L(upSrc, "Pmax Pmin/1");  L("closed loop?/1", "Pmax Pmin/2");  L(loSrc, "Pmax Pmin/3");
-    lag("Tlag", "par.Tlag", [X(13), 133, X(13)+80, 167], "0");
-    L("Pmax Pmin/1", "Tlag/1");
+    % frequency response: P_ref = P_set + droop
+    kc(mdl, "Freq_ref", "par.Freq_ref");
+    nb(mdl, "sum", "f error", "Inputs", "+-");
+    nb(mdl, "dz", "fdbd", "LowerValue", "par.fdbd1", "UpperValue", "par.fdbd2");
+    nb(mdl, "sat", "under-f", "UpperLimit", "inf", "LowerLimit", "0");
+    nb(mdl, "sat", "over-f", "UpperLimit", "0", "LowerLimit", "-inf");
+    nb(mdl, "gain", "Dup", "Gain", "par.Dup");
+    nb(mdl, "gain", "Ddn", "Gain", "par.Ddn");
+    nb(mdl, "sum", "P_set + droop", "Inputs", "+++");
+    set_param(mdl + "/P_set + droop", "Position", [0 0 30 80]);
+    rowsF = {
+        [stg("@f_meas", 0), stg("f error", 2, {1, "Freq_ref"}), stg("fdbd"), stg(">df")]
+        [stg("@df", 0), stg("under-f"), stg("Dup"), stg(">dP_up")]
+        [stg("@df", 0), stg("over-f"), stg("Ddn"), stg(">dP_dn")]
+        [stg("@P_set", 0), stg("P_set + droop", 1, {2, "@dP_up"; 3, "@dP_dn"}), stg(">P_ref")]};
+    [y, h2, r2] = ctrlSection(mdl, "Frequency response (Ddn, Dup)", rowsF, x, y, cm, areaColor("controller"));
 
-    % ---- Q / V path: RefFlag, deadband, error limits, freeze, PI, Tfv ----
-    lag("Q filt", "par.Tfltr", [X(1), 543, X(1)+80, 577], "0");  L("Q_meas/1", "Q filt/1");
-    lag("V filt", "par.Tfltr", [X(1), 643, X(1)+80, 677], "1");  L("V_meas/1", "V filt/1");
-    B("simulink/Math Operations/Gain", "Kc", [X(2), 590, X(2)+40, 620], "Gain", "par.Kc");
-    L("Q filt/1", "Kc/1");
-    S("V + Kc Q", "++", [X(3), 620, X(3)+30, 670]);
-    L("V filt/1", "V + Kc Q/1");  L("Kc/1", "V + Kc Q/2");
-    K("Vref", "par.Vref", [X(3), 700, X(3)+40, 720]);
-    S("V error", "+-", [X(4), 640, X(4)+30, 710]);
-    L("Vref/1", "V error/1");  L("V + Kc Q/1", "V error/2");
-    S("Q error", "+-", [X(4), 470, X(4)+30, 560]);
-    L("Q_set/1", "Q error/1");  L("Q filt/1", "Q error/2");
-    K("RefFlag", "par.RefFlag", [X(4), 590, X(4)+50, 610]);
-    B("simulink/Signal Routing/Switch", "V control?", [X(5), 540, X(5)+40, 660], "Criteria", "u2 ~= 0");
-    L("V error/1", "V control?/1");  L("RefFlag/1", "V control?/2");  L("Q error/1", "V control?/3");
-    B("simulink/Discontinuities/Dead Zone", "dbd", [X(6), 585, X(6)+50, 615], ...
-        "LowerValue", "par.dbd1", "UpperValue", "par.dbd2");
-    L("V control?/1", "dbd/1");
-    B("simulink/Discontinuities/Saturation", "emax emin", [X(7), 585, X(7)+40, 615], ...
-        "UpperLimit", "par.emax", "LowerLimit", "par.emin");
-    L("dbd/1", "emax emin/1");
-    K("Vfrz", "par.Vfrz", [X(6), 720, X(6)+40, 740]);
-    B("simulink/Logic and Bit Operations/Relational Operator", "V < Vfrz", [X(7), 680, X(7)+40, 730], "Operator", "<");
-    L("V filt/1", "V < Vfrz/1");  L("Vfrz/1", "V < Vfrz/2");
-    K("frozen", "0", [X(7), 640, X(7)+40, 660]);
-    B("simulink/Signal Routing/Switch", "freeze", [X(8), 600, X(8)+40, 700], "Criteria", "u2 ~= 0");
-    L("frozen/1", "freeze/1");  L("V < Vfrz/1", "freeze/2");  L("emax emin/1", "freeze/3");
-    % feed-forward: Q_set in Q control, none in voltage control
-    K("no ff", "0", [X(5), 420, X(5)+40, 440]);
-    B("simulink/Signal Routing/Switch", "Q feed-forward", [X(6), 440, X(6)+40, 520], "Criteria", "u2 ~= 0");
-    L("no ff/1", "Q feed-forward/1");  L("RefFlag/1", "Q feed-forward/2");  L("Q_set/1", "Q feed-forward/3");
-    K("Qmax", "par.Qmax", [X(7), 460, X(7)+40, 480]);
-    K("Qmin", "par.Qmin", [X(7), 510, X(7)+40, 530]);
-    S("Qmax - ff", "+-", [X(8), 450, X(8)+30, 490]);
-    S("Qmin - ff", "+-", [X(8), 510, X(8)+30, 550]);
-    L("Qmax/1", "Qmax - ff/1");  L("Q feed-forward/1", "Qmax - ff/2");
-    L("Qmin/1", "Qmin - ff/1");  L("Q feed-forward/1", "Qmin - ff/2");
-    pid("Kp Ki", "par.Kp", "par.Ki", [X(9), 500, X(9)+80, 620]);
-    L("freeze/1", "Kp Ki/1");  L("Qmax - ff/1", "Kp Ki/2");  L("Qmin - ff/1", "Kp Ki/3");
-    S("ff + PI", "++", [X(10), 470, X(10)+30, 560]);
-    L("Q feed-forward/1", "ff + PI/1");  L("Kp Ki/1", "ff + PI/2");
-    lag("Tfv", "par.Tfv", [X(11), 498, X(11)+80, 532], "0");
-    L("ff + PI/1", "Tfv/1");
+    % P control (Frqflag): PI on P_ref - P_filt, P_ref fed forward
+    nb(mdl, "sum", "Pmax - ref", "Inputs", "+-");
+    nb(mdl, "sum", "Pmin - ref", "Inputs", "+-");
+    nb(mdl, "sum", "P error", "Inputs", "+-");
+    nb(mdl, "sat", "femax femin", "UpperLimit", "par.femax", "LowerLimit", "par.femin");
+    piBlk(mdl, "Kpg Kig", "par.Kpg", "par.Kig", "");
+    nb(mdl, "sum", "ref + PI", "Inputs", "++");
+    kc(mdl, "Frqflag", "par.Frqflag");
+    nb(mdl, "switch", "closed loop?", "Criteria", "u2 ~= 0");
+    nb(mdl, "satdyn", "Pmax Pmin");
+    lagBlk(mdl, "Tlag", "par.Tlag", "0");
+    rowsP = {
+        [stg("@" + up, 0), stg("Pmax - ref", 1, {2, "@P_ref"}), stg(">P_up_PI")]
+        [stg("@P_lo", 0), stg("Pmin - ref", 1, {2, "@P_ref"}), stg(">P_lo_PI")]
+        [stg("@P_ref", 0), stg("P error", 1, {2, "@P_filt"}), stg("femax femin"), ...
+         stg("Kpg Kig", 1, {2, "@P_up_PI"; 3, "@P_lo_PI"}), stg(">P_PI")]
+        [stg("@P_ref", 0), stg("ref + PI", 1, {2, "@P_PI"}), stg("closed loop?", 1, {2, "Frqflag"; 3, "@P_set"}), ...
+         stg("Pmax Pmin", 2, {1, "@" + up; 3, "@P_lo"}), stg("Tlag"), stg(">P_ord")]};
+    [y, h3, r3] = ctrlSection(mdl, "P control (Frqflag)", rowsP, x, y, cm, areaColor("controller"));
 
-    % ---- dispatch over the assets ----
+    % Q or V control (RefFlag): PI on the Q or V error, Q_set fed forward in Q control
+    nb(mdl, "gain", "Kc", "Gain", "par.Kc");
+    nb(mdl, "sum", "V + Kc Q", "Inputs", "++");
+    kc(mdl, "Vref", "par.Vref");
+    nb(mdl, "sum", "V error", "Inputs", "+-");
+    kc(mdl, "Vfrz", "par.Vfrz");
+    nb(mdl, "rel", "V < Vfrz", "Operator", "<");
+    kc(mdl, "RefFlag ff", "par.RefFlag");  kc(mdl, "no ff", "0");
+    nb(mdl, "switch", "Q feed-forward", "Criteria", "u2 ~= 0");
+    kc(mdl, "Qmax", "par.Qmax");  nb(mdl, "sum", "Qmax - ff", "Inputs", "+-");
+    kc(mdl, "Qmin", "par.Qmin");  nb(mdl, "sum", "Qmin - ff", "Inputs", "+-");
+    nb(mdl, "sum", "Q error", "Inputs", "+-");
+    kc(mdl, "RefFlag", "par.RefFlag");
+    nb(mdl, "switch", "V control?", "Criteria", "u2 ~= 0");
+    nb(mdl, "dz", "dbd", "LowerValue", "par.dbd1", "UpperValue", "par.dbd2");
+    nb(mdl, "sat", "emax emin", "UpperLimit", "par.emax", "LowerLimit", "par.emin");
+    kc(mdl, "frozen", "0");
+    nb(mdl, "switch", "freeze", "Criteria", "u2 ~= 0");
+    piBlk(mdl, "Kp Ki", "par.Kp", "par.Ki", "");
+    nb(mdl, "sum", "ff + PI", "Inputs", "++");
+    lagBlk(mdl, "Tfv", "par.Tfv", "0");
+    rowsQ = {
+        [stg("@Q_filt", 0), stg("Kc"), stg(">KcQ")]
+        [stg("@V_filt", 0), stg("V + Kc Q", 1, {2, "@KcQ"}), stg("V error", 2, {1, "Vref"}), stg(">V_err")]
+        [stg("@V_filt", 0), stg("V < Vfrz", 1, {2, "Vfrz"}), stg(">V_low")]
+        [stg("@Q_set", 0), stg("Q feed-forward", 3, {1, "no ff"; 2, "RefFlag ff"}), stg(">Q_ff")]
+        [stg("Qmax", 0), stg("Qmax - ff", 1, {2, "@Q_ff"}), stg(">Q_up_PI")]
+        [stg("Qmin", 0), stg("Qmin - ff", 1, {2, "@Q_ff"}), stg(">Q_lo_PI")]
+        [stg("@Q_set", 0), stg("Q error", 1, {2, "@Q_filt"}), stg("V control?", 3, {1, "@V_err"; 2, "RefFlag"}), ...
+         stg("dbd"), stg("emax emin"), stg("freeze", 3, {1, "frozen"; 2, "@V_low"}), ...
+         stg("Kp Ki", 1, {2, "@Q_up_PI"; 3, "@Q_lo_PI"}), stg(">Q_PI")]
+        [stg("@Q_ff", 0), stg("ff + PI", 1, {2, "@Q_PI"}), stg("Tfv"), stg(">Q_ord")]};
+    x2 = max([r1 r2 r3]) + 80;   % second column of function areas
+    [y, h4, r4] = ctrlSection(mdl, "Q or V control (RefFlag)", rowsQ, x2, 20, cm, areaColor("controller"));
+
+    % dispatch over the assets
     body = [
         "% Split the plant P and Q orders over the assets in proportion to"
         "% their availability (equal shares if nothing is available)."];
@@ -1815,31 +1906,20 @@ function buildPlantCtrlRepc(name, folder)
         "P_set_k = P_ord * w;"
         "Q_set_k = Q_ord * par.share;   % Q by rating share (also with no availability)"];
     addMatlabFunction(mdl + "/dispatch", "dispatch", din, ["P_set_k", "Q_set_k"], body, "par", ...
-        [X(14), 120, X(14)+130, 540]);
-    L("Tlag/1", "dispatch/1");  L("Tfv/1", "dispatch/2");  L("P_avail_k/1", "dispatch/3");
-    if isB, L("SOC_k/1", "dispatch/4"); end
+        [0 0 150 40*numel(din) + 20]);
+    sides = {2, "@Q_ord"; 3, "@P_avail_k"};
+    if isB, sides(end+1, :) = {4, "@SOC_k"}; end
+    rowsD = {[stg("@P_ord", 0), stg("dispatch", 1, sides, {2, "Q_set_k"}), stg(">P_set_k")]};
+    [~, h5, r5] = ctrlSection(mdl, "Dispatch to the assets", rowsD, x2, y, cm, areaColor("asset"));
 
-    % ---- outports ----
+    % outputs
     outs = ["P_set_k", "Q_set_k", "P_avail", "P_plant", "Q_plant"];
-    yo = [200, 460, 760, 300, 560];
-    srcs = ["dispatch/1", "dispatch/2", "P_avail sum/1", "P_meas/1", "Q_meas/1"];
+    srcs = ["@P_set_k", "@Q_set_k", "@P_avail", "@P_meas", "@Q_meas"];
     if isB
-        outs = [outs, "P_chg_max", "P_dis_max", "SOC"];  yo = [yo, 820, 860, 900];
-        srcs = [srcs, "BESS limits/1", "BESS limits/2", "BESS limits/3"];
+        outs = [outs, "P_chg_max", "P_dis_max", "SOC"];
+        srcs = [srcs, "@P_chg_max", "@P_dis_max", "@SOC"];
     end
-    xo = X(14) + 220;
-    for k = 1:numel(outs)
-        B("simulink/Sinks/Out1", outs(k), [xo, yo(k)-7, xo+30, yo(k)+7], "Port", num2str(k), "OutDataTypeStr", "double");
-        L(srcs(k), outs(k) + "/1");
-    end
-
-    % ---- role areas ----
-    addArea(mdl, "Frequency response (Ddn, Dup)", [X(1)-10, 150, X(5)+60, 250], areaColor("interface"));
-    addArea(mdl, "P control (Frqflag)", [X(6)-10, 40, X(13)+100, 440], areaColor("controller"));
-    addArea(mdl, "Q or V control (RefFlag)", [X(2)-10, 405, X(11)+100, 745], areaColor("controller"));
-    addArea(mdl, "Dispatch to the assets", [X(14)-10, 100, X(14)+150, 560], areaColor("asset"));
-
-    save_system(mdl, fullfile(folder, mdl + ".slx"));
-    close_system(mdl);
-    registerInProject(fullfile(folder, mdl + ".slx"));
+    hOut = ctrlOutputs(mdl, outs, srcs, max([r1 r2 r3 r4 r5]) + 110, cm);
+    alignColumns(hIn, {[h1 h2 h3], [h4 h5]}, hOut);
+    ctrlSave(mdl, folder);
 end
