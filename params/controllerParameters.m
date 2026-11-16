@@ -30,16 +30,35 @@ function ctrl = controllerParameters(p)
     ctrl.wppc  = plantCtrl(p.wt.Prated,   p.wt.N);
     ctrl.sppc  = plantCtrl(p.pv.Prated,   p.pv.N);
     ctrl.bessc = plantCtrl(p.bess.Prated, p.bess.N);
+    % WECC REPC_A settings of each plant controller (p.pc, plantControlParameters)
+    for c = ["wppc", "sppc", "bessc"]
+        ctrl.(c).par = copyFields(ctrl.(c).par, p.pc.(c));
+    end
+    ctrl.bessc.par.SOCmin = p.bess.SOCmin;
+    ctrl.bessc.par.SOCmax = p.bess.SOCmax;
 
     % Asset controllers (run at the simulation step)
     ctrl.wt   = assetCtrl(p.sim.Ts, p.wt.nAgg * p.wt.Pn);
+    for f = string(fieldnames(p.wt.iec.ctrl))'     % IEC 61400-27-1 Type 4A control
+        ctrl.wt.par.(f) = p.wt.iec.ctrl.(f);
+    end
     ctrl.pv   = assetCtrl(p.sim.Ts, p.pv.Prated / p.pv.N);
+    ctrl.pv.par = copyFields(ctrl.pv.par, p.pv.wecc.ctrl);         % WECC REEC_B
     ctrl.bess = assetCtrl(p.sim.Ts, p.bess.Prated / p.bess.N);
     ctrl.bess.par.Pmax = (p.bess.Pmax / p.bess.N) / ctrl.bess.Pbase;  % [pu] power limit
+    ctrl.bess.par = copyFields(ctrl.bess.par, p.bess.wecc.ctrl);     % WECC REEC_C
+    ctrl.bess.par.SOCmin = p.bess.SOCmin;
+    ctrl.bess.par.SOCmax = p.bess.SOCmax;
 
     for c = string(fieldnames(ctrl))'
         r = ctrl.(c).Ts / p.sim.Ts;
         assert(abs(r - round(r)) < 1e-9, "ctrl.%s.Ts must be an integer multiple of sim.Ts", c);
+    end
+end
+
+function a = copyFields(a, b)
+    for f = string(fieldnames(b))'
+        a.(f) = b.(f);
     end
 end
 

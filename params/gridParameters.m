@@ -12,4 +12,15 @@ function grid = gridParameters()
     grid.SCR  = 10;          % [-]  short-circuit ratio, Ssc / Pmax_poc
     grid.XR   = 10;          % [-]  X/R ratio of the grid impedance
     grid.E    = 1.0;         % [pu] Thevenin source voltage (angle 0)
+
+    % Grid voltage dip (source voltage of the Thevenin equivalent); depth 0
+    % = no dip. Used for fault-ride-through tests (case set wt_frt).
+    grid.dip.t0    = 30;     % [s]  start
+    grid.dip.dur   = 0.15;   % [s]  duration
+    grid.dip.depth = 0;      % [pu] reduction of E during the dip
+
+    % Grid frequency step (pu on f0); df 0 = no event. Seen by the plant
+    % controllers (network bus) and the HPPC (TSO bus). Case set freq_step.
+    grid.fev.t0 = 40;        % [s]  time of the step
+    grid.fev.df = 0;         % [pu] frequency change (0.004 = +0.2 Hz)
 end

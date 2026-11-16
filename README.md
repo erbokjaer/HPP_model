@@ -17,7 +17,7 @@ Or open `main.m`, pick a case set and cases in its settings block, and press Run
 
 Always open the project first. It puts `params/`, `models/`, `scripts/` and `utilities/` on the path and sends Simulink cache files to `work/`. No script uses `cd` or `addpath`.
 
-The architecture, interfaces, typical values and the staged plan are in [docs/design.md](docs/design.md). **Status: stage 2 of 5** (structure and phasor network built; controller logic and generator models are placeholders).
+The architecture, interfaces, typical values and the staged plan are in [docs/design.md](docs/design.md). **Status: stage 4 of 5** (structure, phasor network, IEC 61400-27-1 Type 4A wind turbine, WECC REEC_B/REEC_C + REGC_A for PV and BESS, closed-loop Q control in the assets, WECC REPC_A plant controllers with their own loops; the HPPC is still an open-loop placeholder).
 
 ## Model structure
 
@@ -42,7 +42,7 @@ The network is a positive-sequence phasor (RMS) model in per unit on 180 MVA, so
 | `models/ctrl/HPPC.slx` | HPP controller (future DLL) |
 | `models/ctrl/WPPC.slx`, `SPPC.slx`, `BESSC.slx` | Plant controllers, asset signals as vectors of width N (future DLLs) |
 | `models/ctrl/WT_ctrl.slx`, `PV_ctrl.slx`, `BESS_ctrl.slx` | Asset controllers (future DLLs) |
-| `models/assets/WT_asset.slx`, `PV_asset.slx`, `BESS_asset.slx` | Asset models: one asset controller instance + placeholder generator (+ battery energy for BESS) |
+| `models/assets/WT_asset.slx`, `PV_asset.slx`, `BESS_asset.slx` | Asset models: one asset controller instance + converter model (IEC Type 4 generator system for wind, WECC REGC_A for PV and BESS) + battery energy for BESS |
 
 **Who owns which model:**
 - **`HPP.slx` is always generated.** `buildHPP()` rebuilds it for the asset counts `p.wt.N`, `p.pv.N` and `p.bess.N` (default 2 each). Never edit it by hand. `runCase` and `runSweep` stop with a message if it was built for a different N than the parameters.
@@ -178,7 +178,7 @@ This submits one job per case, each running `runCase(set, i)`. The script counts
 
 ## Status and next steps
 
-- Stages 1 (structure) and 2 (network) are done. Controller logic and generator models are placeholders: P dispatch and Q dispatch are open loop, so network losses (about 2.4 % at 150 MW) are not compensated (P_poc 146.4 MW for P_ref 150 MW), and the reactive consumption of cables and transformers (about −21 Mvar at the POC) comes from the grid. In a weak grid (`grid_strength/SCR3`) V_poc drops to about 0.94 pu. Next: stage 3, the IEC 61400-27-1 Type 4A wind model (docs/design.md, section 8).
+- Stages 1 (structure), 2 (network), 3 (IEC Type 4A wind turbine, fault-ride-through case set `wt_frt`) and 4 (WECC REEC_B / REEC_C + REGC_A for PV and BESS, closed-loop asset Q control, REPC_A plant controllers; case sets `bess_soc`, `freq_step`) are done. All controllers are block diagrams in `models/ctrl/`; parameter values (`p.wt.iec`, `p.pv.wecc`, `p.bess.wecc`, `p.pc`) are typical values to be checked against the standards. Each plant controller closes P, frequency and Q loops on its own busbar feeder, like a vendor plant controller. The HPPC is still open loop: losses between the busbar and the POC are not compensated (P_poc 146.5 MW for P_ref 150 MW; Q_poc −10.4 Mvar from the 132 kV transformer), and nothing at the POC coordinates the plants' frequency response. Next: stage 5, the HPPC functions (docs/design.md, section 8).
 - Start-up is not initialised in steady state yet: during the first fraction of a second the controllers see zero measurements and the network sees no injection.
 - `SOCmin`, `SOCmax` and `p.ctrl.hppc.par.Ppoc_max` are defined but not used yet.
 - The `"noBattery"` variant bug is fixed: derived parameters are now computed after the variant.
