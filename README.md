@@ -34,7 +34,22 @@ Always open the project first. It puts `params/`, `models/`, `scripts/` and `uti
 
 Everything the models use lives in the struct `p`. Blocks reference fields such as `p.wt.Pn`; there are no other workspace variables. To change a default, edit the component function in `params/`. For interactive work, reload afterwards with `p = HPP_parameters();`.
 
-`HPP_controller.slx` reads only `p.ctrl`. Keep it that way: it is the parameter interface of the future generated code and DLL.
+## Controller interface (per unit)
+
+`HPP_controller.slx` is the future code-generation / IEEE/CIGRE DLL target. It works entirely in per unit on the base `p.ctrl.Pbase` (= `p.grid.Pbase`, 180 MW), all ports are scalar `double`, and it runs at the fixed sample time `p.ctrl.Ts` (0.1 s).
+
+| Port / parameter | Unit | Notes |
+|---|---|---|
+| in `P_ref` | pu | plant power reference |
+| in `P_wt_avail`, `P_pv_avail` | pu | available wind / PV power |
+| in `SOC` | – | battery state of charge, 0–1 |
+| out `P_wt_set`, `P_pv_set`, `P_bess_set` | pu | set-points; + = export / discharge |
+| param `par.Pbess_max` | pu | battery set-point limit |
+| param `par.Ppoc_max` | pu | plant export limit (not used by the placeholder logic yet) |
+
+The tunable parameters are the struct `p.ctrl.par`, passed to the controller as the model argument `par` (Model block → Instance parameters). In generated code it becomes the per-instance parameter struct, and later the DLL's parameter list. Everything the controller needs goes into `p.ctrl.par`, in pu; the controller reads nothing else. `Ts` and `Pbase` are fixed settings.
+
+`HPP.slx` converts around the controller: gains `1/p.ctrl.Pbase` on the power inputs and `p.ctrl.Pbase` on the outputs, so the plant, the logged signals and the plots stay in W (MW). In PSCAD the same conversion belongs on the PSCAD side of the DLL. The controller's model workspace takes its standalone defaults (`Ts`, `par`) from `HPP_parameters()`, so they cannot drift.
 
 ## Case sets
 
@@ -118,8 +133,8 @@ This submits one job per case, each running `runCase(set, i)`. The script counts
 ## Status and next steps
 
 - The plant subsystem and the controller logic are placeholders.
-- The controller's SOC input is not used yet; `SOCmin`, `SOCmax` and `p.ctrl.Ppoc_max` are defined but unused.
-- Known issue: the `"noBattery"` variant of `HPP_parameters` sets `p.bess.Pmax = 0` after `p.ctrl` is built, so `p.ctrl.Pbess_max` stays at 30 MW. Use the case `handpicked/noBess` instead.
+- The controller's SOC input is not used yet; `SOCmin`, `SOCmax` and `p.ctrl.par.Ppoc_max` are defined but unused.
+- Known issue: the `"noBattery"` variant of `HPP_parameters` sets `p.bess.Pmax = 0` after `p.ctrl` is built, so `p.ctrl.par.Pbess_max` stays at 30 MW (0.167 pu). Use the case `handpicked/noBess` instead.
 - Next phase: code generation for `HPP_controller` and an IEEE/CIGRE DLL for PSCAD. This needs Simulink Coder, Embedded Coder and a C compiler, which are not installed yet. Rapid Accelerator also needs the compiler.
 
 ## Source control

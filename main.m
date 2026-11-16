@@ -31,7 +31,7 @@ for k = 1:height(cases)
             continue
         catch
             % no saved result for this case: run it below
-        end
+        end 
     end
     out(k) = runCase(setName, id);
 end
