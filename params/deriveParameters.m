@@ -23,4 +23,7 @@ function p = deriveParameters(p)
         "SOC0", p.bess.SOC0, ...
         "kSOC", p.ctrl.bess.Pbase / Eunit), ...        % [1/s] dSOC/dt per pu power
         p.bess.N, 1);
+
+    % Network solver data (Z matrix etc.), depends on N and ratings
+    p.net.solver = networkSolverData(p);
 end

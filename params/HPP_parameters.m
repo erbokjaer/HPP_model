@@ -20,6 +20,7 @@ function p = HPP_parameters(variant)
     p.pv   = pvParameters();
     p.bess = batteryParameters();
     p.grid = gridParameters();
+    p.net  = networkParameters();
     p.comm = commParameters();
 
     switch variant

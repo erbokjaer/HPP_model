@@ -7,8 +7,8 @@ function T = summarizeResults(source, caseId, opts)
 %   T = summarizeResults(..., Signals=["SOC"])    choose the signals
 %
 %   One row per case (row names from caseLabels). For each signal the
-%   columns <signal>_final, <signal>_min and <signal>_max. Powers are in
-%   MW. Failed runs get NaN.
+%   columns <signal>_final, <signal>_min and <signal>_max. P in MW, Q in
+%   Mvar, V and SOC in pu. Failed runs get NaN.
 
     arguments
         source
@@ -31,7 +31,7 @@ function T = summarizeResults(source, caseId, opts)
     names = strings(1, 0);
     data = zeros(n, 0);
     for sig = opts.Signals
-        if startsWith(sig, "P_")
+        if startsWith(sig, ["P_", "Q_"])      % W -> MW, var -> Mvar
             scale = 1e-6;
         else
             scale = 1;

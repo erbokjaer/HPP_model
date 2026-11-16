@@ -35,6 +35,9 @@ function buildHPP(opts)
     end
 
     p = HPP_parameters();
+    % rebuilding a model that exists on the path warns about "shadowing"
+    ws0 = warning("off", "Simulink:Engine:MdlFileShadowing");
+    restoreWarn = onCleanup(@() warning(ws0));
 
     if opts.All
         specs = controllerSpecs();
@@ -61,14 +64,16 @@ function specs = controllerSpecs()
           "P_wpp","Q_wpp","P_spp","Q_spp","P_bess","Q_bess"];
     out = ["P_set_wpp","Q_set_wpp","P_set_spp","Q_set_spp","P_set_bess","Q_set_bess"];
     body = [
-        "% Stage 1 placeholder: wind and PV deliver what is available, the BESS"
-        "% covers the rest of P_ref within its limits. No Q control yet."
+        "% Placeholder (stages 1-2): wind and PV deliver what is available, the BESS"
+        "% covers the rest of P_ref within its limits (open loop: P_poc is not used,"
+        "% so network losses are not compensated). Q_ref is split over the plants by"
+        "% rating, also open loop."
         "P_set_wpp  = P_avail_wpp;"
         "P_set_spp  = P_avail_spp;"
         "P_set_bess = min(max(P_ref - P_avail_wpp - P_avail_spp, -P_chg_max_bess), P_dis_max_bess);"
-        "Q_set_wpp  = 0;"
-        "Q_set_spp  = 0;"
-        "Q_set_bess = 0;"];
+        "Q_set_wpp  = Q_ref * par.qshare(1);"
+        "Q_set_spp  = Q_ref * par.qshare(2);"
+        "Q_set_bess = Q_ref * par.qshare(3);"];
     specs(end+1) = spec("HPPC", "hppc", dims(in), dims(out), body, ...
         "HPP controller. Per unit on p.ctrl.hppc.Pbase (POC base). Placeholder dispatch.");
 
@@ -170,14 +175,7 @@ function buildController(s, folder)
     outNames = string({s.outputs.name});
     nIn = numel(inNames); nOut = numel(outNames);
     h = 40 * max(nIn, nOut) + 40;
-    fb = mdl + "/logic";
-    add_block("simulink/User-Defined Functions/MATLAB Function", fb, "Position", [300 30 520 30+h]);
-    rt = sfroot;
-    ch = rt.find("-isa", "Stateflow.EMChart", "Path", char(fb));
-    sig = "function [" + strjoin(outNames, ", ") + "] = logic(" + strjoin(inNames, ", ") + ", par)";
-    ch.Script = char(strjoin([sig; "%#codegen"; s.code; "end"], newline));
-    d = ch.find("-isa", "Stateflow.Data", "Name", "par");
-    d.Scope = 'Parameter';
+    addMatlabFunction(mdl + "/logic", "logic", inNames, outNames, s.code, "par", [300 30 520 30+h]);
 
     for k = 1:nIn
         add_block("simulink/Sources/In1", mdl + "/" + inNames(k), "Port", num2str(k), ...
@@ -205,8 +203,9 @@ function buildAsset(type, folder)
     closeIfLoaded(mdl);
     new_system(mdl);
     set_param(mdl, "SolverType", "Fixed-step", "Solver", "ode4", "FixedStep", "Tsim", "StopTime", "inf", ...
-        "Description", type + " asset: " + ctrl + " (asset controller) + placeholder generator model. " + ...
-                       "Per unit on the asset rating. Argument ap = p." + t + ".ap(k).");
+        "Description", type + " asset: " + ctrl + " (asset controller) + placeholder generator model " + ...
+                       "(current source aligned with the terminal voltage). Per unit on the asset rating " + ...
+                       "(voltage on the nominal voltage). Argument ap = p." + t + ".ap(k).");
 
     ws = get_param(mdl, "ModelWorkspace");
     ws.DataSource = "MATLAB Code";
@@ -219,50 +218,69 @@ function buildAsset(type, folder)
     reload(ws);
     set_param(mdl, "ParameterArgumentNames", "ap");
 
-    % inports
-    ins = ["P_set", "Q_set", "V_term"];
+    % inports: set-points, terminal voltage phasor (from the network, one
+    % step old), primary source
+    ins = ["P_set", "Q_set", "V_re", "V_im"];
     if type == "WT", ins(end+1) = "P_wind_avail"; end
     if type == "PV", ins(end+1) = "P_pv_avail"; end
     for k = 1:numel(ins)
         add_block("simulink/Sources/In1", mdl + "/" + ins(k), "Port", num2str(k), ...
             "OutDataTypeStr", "double", "PortDimensions", "1", "Position", [40, 50*k, 70, 50*k+14]);
     end
+    L = @(a, b) add_line(mdl, a, b, "autorouting", "smart");
+
+    % terminal voltage magnitude for the controller
+    addMatlabFunction(mdl + "/terminal", "terminal", ["V_re", "V_im"], "V_term", ...
+        "V_term = sqrt(V_re^2 + V_im^2);", "", [130 140 200 200]);
+    L("V_re/1", "terminal/1"); L("V_im/1", "terminal/2");
 
     % asset controller instance
     cb = mdl + "/ctrl";
-    add_block("simulink/Ports & Subsystems/Model", cb, "ModelName", ctrl, "Position", [220 40 380 340]);
+    add_block("simulink/Ports & Subsystems/Model", cb, "ModelName", ctrl, "Position", [240 40 400 340]);
     Simulink.ModelReference.refresh(cb);
     setArg(cb, "par", "ap.ctrl");
+    L("P_set/1", "ctrl/1"); L("Q_set/1", "ctrl/2"); L("terminal/1", "ctrl/3");
 
-    % generator placeholder: P = ip*V, Q = iq*V; measurements delayed one step
-    add_block("simulink/Math Operations/Product", mdl + "/P gen", "Position", [480 60 510 90]);
-    add_block("simulink/Math Operations/Product", mdl + "/Q gen", "Position", [480 130 510 160]);
+    % generator placeholder (WECC REGC-like, no dynamics yet): current source
+    % aligned with the terminal voltage, I = (ip - j*iq) * V/|V|,
+    % so P = |V|*ip and Q = |V|*iq (+ = export / capacitive)
+    gen = [
+        "v  = max(sqrt(V_re^2 + V_im^2), 1e-3);"
+        "cr = V_re / v;  ci = V_im / v;"
+        "I_re = ip_cmd*cr + iq_cmd*ci;"
+        "I_im = ip_cmd*ci - iq_cmd*cr;"
+        "P = v * ip_cmd;"
+        "Q = v * iq_cmd;"];
+    addMatlabFunction(mdl + "/generator", "generator", ["ip_cmd", "iq_cmd", "V_re", "V_im"], ...
+        ["P", "Q", "I_re", "I_im"], gen, "", [480 40 600 200]);
+    L("ctrl/1", "generator/1"); L("ctrl/2", "generator/2");
+    L("V_re/1", "generator/3"); L("V_im/1", "generator/4");
+
+    % measured P, Q back to the controller (one step old)
     add_block("simulink/Discrete/Memory", mdl + "/P meas", "Position", [480 260 510 290]);
     add_block("simulink/Discrete/Memory", mdl + "/Q meas", "Position", [480 320 510 350]);
-    L = @(a, b) add_line(mdl, a, b, "autorouting", "smart");
-    L("P_set/1", "ctrl/1"); L("Q_set/1", "ctrl/2"); L("V_term/1", "ctrl/3");
+    L("generator/1", "P meas/1"); L("generator/2", "Q meas/1");
     L("P meas/1", "ctrl/4"); L("Q meas/1", "ctrl/5");
-    L("ctrl/1", "P gen/1"); L("V_term/1", "P gen/2");
-    L("ctrl/2", "Q gen/1"); L("V_term/1", "Q gen/2");
-    L("P gen/1", "P meas/1"); L("Q gen/1", "Q meas/1");
 
-    outs = ["P", "Q", "P_avail"];
+    % outports: 1 P, 2 Q, 3 P_avail, 4 I_re, 5 I_im (asset pu), 6 SOC (BESS)
+    outs = ["P", "Q", "P_avail", "I_re", "I_im"];
     for k = 1:numel(outs)
         add_block("simulink/Sinks/Out1", mdl + "/" + outs(k), "Port", num2str(k), ...
-            "Position", [640, 60*k, 670, 60*k+14]);
+            "Position", [700, 50*k, 730, 50*k+14]);
     end
-    L("P gen/1", "P/1"); L("Q gen/1", "Q/1"); L("ctrl/3", "P_avail/1");
+    L("generator/1", "P/1"); L("generator/2", "Q/1"); L("ctrl/3", "P_avail/1");
+    L("generator/3", "I_re/1"); L("generator/4", "I_im/1");
 
     switch type
         case "WT", L("P_wind_avail/1", "ctrl/6");
         case "PV", L("P_pv_avail/1", "ctrl/6");
         case "BESS"
             % battery energy: dSOC/dt = -kSOC * P  (P in pu, + = discharge)
-            add_block("simulink/Math Operations/Gain", mdl + "/kSOC", "Gain", "-ap.kSOC", "Position", [560 380 600 410]);
+            add_block("simulink/Math Operations/Gain", mdl + "/kSOC", "Gain", "-ap.kSOC", "Position", [560 400 600 430]);
             add_block("simulink/Continuous/Integrator", mdl + "/SOC int", "InitialCondition", "ap.SOC0", ...
-                "Position", [640 380 670 410]);
-            add_block("simulink/Sinks/Out1", mdl + "/SOC", "Port", "4", "Position", [760 388 790 402]);
-            L("P gen/1", "kSOC/1"); L("kSOC/1", "SOC int/1"); L("SOC int/1", "SOC/1"); L("SOC int/1", "ctrl/6");
+                "Position", [640 400 670 430]);
+            add_block("simulink/Sinks/Out1", mdl + "/SOC", "Port", "6", "Position", [760 408 790 422]);
+            L("generator/1", "kSOC/1"); L("kSOC/1", "SOC int/1"); L("SOC int/1", "SOC/1"); L("SOC int/1", "ctrl/6");
     end
     save_system(mdl, fullfile(folder, mdl + ".slx"));
     close_system(mdl);
@@ -297,38 +315,72 @@ function buildTop(p, folder)
     T.const("Q_ref", "0", [30 110]);
     T.chain("Q_ref/1", "delay:p.comm.tso@0", "HPPC/2", "Q_ref");
     T.const("f_meas", "1", [30 170]);         T.line("f_meas/1", "HPPC/3");
-    T.const("V_poc", "1", [30 350]);          T.line("V_poc/1", "HPPC/6");
+
+    % ---------------- network ----------------
+    % system base p.grid.Pbase; "sb" converts system pu to the HPPC base
+    sb = "p.grid.Pbase";
+    nA = p.wt.N + p.pv.N + p.bess.N;
+    buildNetwork(T.m + "/Network", [2100 900 2300 1300]);
+    T.block("simulink/Signal Routing/Mux", "I_re all", [2000 900 2005 1000], "Inputs", "3");
+    T.block("simulink/Signal Routing/Mux", "I_im all", [2000 1020 2005 1120], "Inputs", "3");
+    T.line("I_re all/1", "Network/1");
+    T.line("I_im all/1", "Network/2");
+    % terminal voltages back to the assets, one step old (the generators'
+    % "PLL"; also avoids an algebraic loop through the network)
+    T.block("simulink/Discrete/Memory", "V_re prev", [2400 900 2430 930], "InitialCondition", sprintf("ones(%d,1)", nA));
+    T.block("simulink/Discrete/Memory", "V_im prev", [2400 960 2430 990], "InitialCondition", sprintf("zeros(%d,1)", nA));
+    T.line("Network/1", "V_re prev/1");
+    T.line("Network/2", "V_im prev/1");
+    T.block("simulink/Signal Routing/Demux", "V_re asset", [2480 900 2485 1000], "Outputs", num2str(nA));
+    T.block("simulink/Signal Routing/Demux", "V_im asset", [2480 1020 2485 1120], "Outputs", num2str(nA));
+    T.line("V_re prev/1", "V_re asset/1");
+    T.line("V_im prev/1", "V_im asset/1");
+    T.block("simulink/Signal Routing/Demux", "P_plant", [2400 1060 2405 1160], "Outputs", "3");
+    T.block("simulink/Signal Routing/Demux", "Q_plant", [2400 1180 2405 1280], "Outputs", "3");
+    T.line("Network/3", "P_plant/1");
+    T.line("Network/4", "Q_plant/1");
+
+    % POC measurements -> HPPC
+    T.chain("Network/6", ["gain:" + sb + "/" + hb, "memory", "delay:p.comm.meas_hppc"], "HPPC/4", "P_poc meas");
+    T.chain("Network/7", ["gain:" + sb + "/" + hb, "memory", "delay:p.comm.meas_hppc"], "HPPC/5", "Q_poc meas");
+    T.chain("Network/8", ["memory", "delay:p.comm.meas_hppc@1"], "HPPC/6", "V_poc meas");
 
     % ---------------- plants ----------------
     plants = [ ...
         struct("tag","wpp",  "ctrl","WPPC",  "c","wppc",  "type","WT",   "t","wt",   "y",  40, "hppIn",[7 12 13],   "hppOut",[1 2]), ...
         struct("tag","spp",  "ctrl","SPPC",  "c","sppc",  "type","PV",   "t","pv",   "y", 900, "hppIn",[8 14 15],   "hppOut",[3 4]), ...
         struct("tag","bess", "ctrl","BESSC", "c","bessc", "type","BESS", "t","bess", "y",1760, "hppIn",[0 16 17],  "hppOut",[5 6])];
-    sumP = strings(1, 3); sumQ = strings(1, 3);
+    offset = 0;
     for i = 1:numel(plants)
-        [sumP(i), sumQ(i)] = buildPlant(T, p, plants(i), hb);
+        buildPlant(T, p, plants(i), hb, sb, i, offset);
+        offset = offset + p.(plants(i).t).N;
     end
 
-    % ---------------- POC (stage 1: lossless sum, no network yet) ----------------
-    T.block("simulink/Math Operations/Sum", "P_poc sum", [1900 300 1930 380], "Inputs", "+++");
-    T.block("simulink/Math Operations/Sum", "Q_poc sum", [1900 440 1930 520], "Inputs", "+++");
-    for i = 1:3
-        T.line(sumP(i), sprintf("P_poc sum/%d", i));
-        T.line(sumQ(i), sprintf("Q_poc sum/%d", i));
-    end
-    T.chain("P_poc sum/1", ["gain:1/" + hb, "memory", "delay:p.comm.meas_hppc"], "HPPC/4", "P_poc meas");
-    T.chain("Q_poc sum/1", ["gain:1/" + hb, "memory", "delay:p.comm.meas_hppc"], "HPPC/5", "Q_poc meas");
-
-    % ---------------- outports (logged as out.yout) ----------------
-    T.outport("P_poc", "P_poc sum/1", 1);
+    % ---------------- outports (logged as out.yout, W / var / pu) ----------------
+    T.block("simulink/Math Operations/Gain", "P_poc to W", [2400 1320 2460 1350], "Gain", sb);
+    T.block("simulink/Math Operations/Gain", "Q_poc to var", [2400 1380 2460 1410], "Gain", sb);
+    T.line("Network/6", "P_poc to W/1");
+    T.line("Network/7", "Q_poc to var/1");
+    T.outport("P_poc", "P_poc to W/1", 1);
     T.outport("SOC", "SOC plant/1", 2);
     T.block("simulink/Math Operations/Gain", "P_bess_set to W", [900 600 960 630], "Gain", hb);
     T.line("HPPC/5", "P_bess_set to W/1");
     T.outport("P_bess_set", "P_bess_set to W/1", 3);
-    T.outport("Q_poc", "Q_poc sum/1", 4);
+    T.outport("Q_poc", "Q_poc to var/1", 4);
     for i = 1:3
-        T.outport("P_" + plants(i).tag, sumP(i), 4 + i);
+        g = "P_" + plants(i).tag + " to W";
+        T.block("simulink/Math Operations/Gain", g, [2500 1060+40*i 2560 1080+40*i], "Gain", sb);
+        T.line(sprintf("P_plant/%d", i), g + "/1");
+        T.outport("P_" + plants(i).tag, g + "/1", 4 + i);
     end
+    for i = 1:3
+        g = "Q_" + plants(i).tag + " to var";
+        T.block("simulink/Math Operations/Gain", g, [2500 1220+40*i 2560 1240+40*i], "Gain", sb);
+        T.line(sprintf("Q_plant/%d", i), g + "/1");
+        T.outport("Q_" + plants(i).tag, g + "/1", 7 + i);
+    end
+    T.outport("V_poc", "Network/8", 11);
+    T.outport("V_bus", "Network/5", 12);
 
     % record what this build was made for; runCase/runSweep check it
     ws = get_param(m, "ModelWorkspace");
@@ -338,7 +390,9 @@ function buildTop(p, folder)
     fprintf("Built HPP.slx with N = %d wind, %d PV, %d BESS asset instances.\n", p.wt.N, p.pv.N, p.bess.N);
 end
 
-function [sumPout, sumQout] = buildPlant(T, p, pl, hb)
+function buildPlant(T, p, pl, hb, sb, idx, offset)
+    % idx: plant number (1 wind, 2 PV, 3 BESS) in the network outputs;
+    % offset: global index of this plant's first asset in the network
     N = p.(pl.t).N;
     y = pl.y;
     pb = "p.ctrl." + pl.c + ".Pbase";
@@ -359,44 +413,54 @@ function [sumPout, sumQout] = buildPlant(T, p, pl, hb)
     T.block("simulink/Signal Routing/Demux", C + " Q_set_k", [1400 y+140 1405 y+260], "Outputs", num2str(N));
     T.chain(C + "/1", ["delay:p.comm.plant_to_asset", "gain:" + pb + "/" + ab], C + " P_set_k/1", "P_set_k " + pl.tag);
     T.chain(C + "/2", ["delay:p.comm.plant_to_asset", "gain:" + pb + "/" + ab], C + " Q_set_k/1", "Q_set_k " + pl.tag);
-    nOutA = 3 + isB;
-    muxNames = ["P", "Q", "P_avail", "SOC"];
-    for j = 1:nOutA
+    % asset outputs: 1 P, 2 Q, 3 P_avail, 4 I_re, 5 I_im, 6 SOC (BESS)
+    muxNames = ["P", "Q", "P_avail", "I_re", "I_im", "SOC"];
+    outIdx = 1:5;
+    if isB, outIdx = 1:6; end
+    for j = outIdx
         T.block("simulink/Signal Routing/Mux", pl.tag + " " + muxNames(j) + "_k", ...
             [1720 y+60*(j-1) 1725 y+60*(j-1)+50], "Inputs", num2str(N));
     end
     for k = 1:N
         a = sprintf("%s %d", pl.type, k);
+        g = offset + k;                       % global asset index in the network
         ya = y + 300 + 130*(k-1);
-        T.model(a, pl.type + "_asset", [1480 ya 1620 ya+100]);
+        T.model(a, pl.type + "_asset", [1480 ya 1620 ya+110]);
         setArg(T.m + "/" + a, "ap", sprintf("p.%s.ap(%d)", pl.t, k));
         T.line(sprintf("%s P_set_k/%d", C, k), a + "/1");
         T.line(sprintf("%s Q_set_k/%d", C, k), a + "/2");
-        T.line("V_term/1", a + "/3");
+        T.line(sprintf("V_re asset/%d", g), a + "/3");
+        T.line(sprintf("V_im asset/%d", g), a + "/4");
         switch pl.type
             case "WT"
                 src = sprintf("wind %d", k);
-                T.block("simulink/Sources/Step", src, [1300 ya+60 1330 ya+90], "Time", "p.wt.tStep", ...
+                T.block("simulink/Sources/Step", src, [1300 ya+70 1330 ya+100], "Time", "p.wt.tStep", ...
                     "Before", "p.wt.Pavail0", "After", "p.wt.PavailStep", "SampleTime", "0");
-                T.line(src + "/1", a + "/4");
+                T.line(src + "/1", a + "/5");
             case "PV"
                 src = sprintf("irradiance %d", k);
-                T.const(src, "p.pv.Pavail", [1300 ya+60]);
-                T.line(src + "/1", a + "/4");
+                T.const(src, "p.pv.Pavail", [1300 ya+70]);
+                T.line(src + "/1", a + "/5");
         end
-        for j = 1:nOutA
+        for j = outIdx
             T.line(sprintf("%s/%d", a, j), sprintf("%s %s_k/%d", pl.tag, muxNames(j), k));
         end
     end
 
-    % plant P and Q in W (stage 1: no network losses)
-    sumPout = T.sumW(pl.tag + " P_k/1", ab, "P_" + pl.tag + " W");
-    sumQout = T.sumW(pl.tag + " Q_k/1", ab, "Q_" + pl.tag + " W");
+    % asset P and Q (asset pu) are not used yet: terminate
+    T.block("simulink/Sinks/Terminator", pl.tag + " P_k unused", [1780 y 1800 y+20]);
+    T.block("simulink/Sinks/Terminator", pl.tag + " Q_k unused", [1780 y+60 1800 y+80]);
+    T.line(pl.tag + " P_k/1", pl.tag + " P_k unused/1");
+    T.line(pl.tag + " Q_k/1", pl.tag + " Q_k unused/1");
 
-    % measurements -> plant controller
-    T.chain(sumPout, ["gain:1/" + pb, "memory", "delay:p.comm.meas_plant"], C + "/3", "P_meas " + pl.tag);
-    T.chain(sumQout, ["gain:1/" + pb, "memory", "delay:p.comm.meas_plant"], C + "/4", "Q_meas " + pl.tag);
-    T.line("V_term/1", C + "/5");
+    % current injections (asset pu -> system pu) into the network
+    T.chain(pl.tag + " I_re_k/1", "gain:" + ab + "/" + sb, sprintf("I_re all/%d", idx), "I_re " + pl.tag);
+    T.chain(pl.tag + " I_im_k/1", "gain:" + ab + "/" + sb, sprintf("I_im all/%d", idx), "I_im " + pl.tag);
+
+    % measurements at the plant's busbar connection -> plant controller
+    T.chain(sprintf("P_plant/%d", idx), ["gain:" + sb + "/" + pb, "memory", "delay:p.comm.meas_plant"], C + "/3", "P_meas " + pl.tag);
+    T.chain(sprintf("Q_plant/%d", idx), ["gain:" + sb + "/" + pb, "memory", "delay:p.comm.meas_plant"], C + "/4", "Q_meas " + pl.tag);
+    T.chain("Network/5", ["memory", "delay:p.comm.meas_plant@1"], C + "/5", "V_meas " + pl.tag);
     T.chain(pl.tag + " P_avail_k/1", ["gain:" + ab + "/" + pb, "memory", "delay:p.comm.meas_plant"], C + "/6", "P_avail_k " + pl.tag);
     if isB
         T.chain(pl.tag + " SOC_k/1", ["memory", "delay:p.comm.meas_plant"], C + "/7", "SOC_k");
@@ -437,11 +501,7 @@ function T = topTools(m)
         "Value", val, "Position", [xy(1) xy(2) xy(1)+60 xy(2)+30]);
     T.model = @(name, ref, pos) addModel(m, name, ref, pos);
     T.chain = @(src, steps, dst, label) chain(m, src, steps, dst, label, @uniq);
-    T.sumW  = @(src, base, label) sumW(m, src, base, label, @uniq);
     T.outport = @(name, src, port) outport(m, name, src, port);
-
-    if ~bdIsLoaded(m), error("model not loaded"); end
-    add_block("simulink/Sources/Constant", m + "/V_term", "Value", "1", "Position", [1300 0 1360 30]);
 end
 
 function addModel(m, name, ref, pos)
@@ -478,17 +538,57 @@ function chain(m, src, steps, dst, label, uniq)
     add_line(m, prev, dst, "autorouting", "smart");
 end
 
-function out = sumW(m, src, base, label, uniq)
-    % sum the elements of a vector (pu on base) and convert to W
-    s = uniq(label + " sum");
-    pp = get_param(m + "/" + extractBefore(src, "/"), "Position");
-    add_block("simulink/Math Operations/Sum", m + "/" + s, "Inputs", "+", "Position", [pp(3)+30 pp(2) pp(3)+60 pp(2)+30]);
-    g = uniq(label);
-    add_block("simulink/Math Operations/Gain", m + "/" + g, "Gain", base, "Position", [pp(3)+90 pp(2) pp(3)+140 pp(2)+30]);
-    add_line(m, src, s + "/1", "autorouting", "smart");
-    h = add_line(m, s + "/1", g + "/1", "autorouting", "smart");
-    set_param(h, "Name", label);
-    out = g + "/1";
+function buildNetwork(sub, pos)
+    % Masked subsystem around one MATLAB Function block that solves the
+    % phasor network each step. Mask parameter "net" = p.net.solver
+    % (see networkSolverData). Inputs: asset current injections (system pu).
+    % Outputs: 1 V_re, 2 V_im (asset terminals), 3 P_plant, 4 Q_plant (3x1,
+    % delivered into the 33 kV busbar per plant), 5 V_bus, 6 P_poc, 7 Q_poc
+    % (into the grid), 8 V_poc. All system pu.
+    add_block("simulink/Ports & Subsystems/Subsystem", sub, "Position", pos);
+    delete_line(sub, "In1/1", "Out1/1");
+    delete_block(sub + "/In1"); delete_block(sub + "/Out1");
+    ins  = ["I_re", "I_im"];
+    outs = ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "P_poc", "Q_poc", "V_poc"];
+    body = [
+        "Z  = complex(net.Zre, net.Zim);"
+        "nA = numel(I_re);"
+        "n  = size(Z, 1);"
+        "Zg = complex(net.Zg_re, net.Zg_im);"
+        "I = complex(zeros(n, 1), zeros(n, 1));"
+        "I(1:nA) = complex(I_re(:), I_im(:));"
+        "I(n) = I(n) + net.E / Zg;                 % grid Norton source at the POC"
+        "V = Z * I;"
+        "V_re = real(V(1:nA));"
+        "V_im = imag(V(1:nA));"
+        "% power each feeder delivers into the busbar (incl. its bus-end charging)"
+        "Vb = V(n-1);"
+        "Vc = V(nA+1:2*nA);"
+        "Ifeed = (Vc - Vb) ./ complex(net.Zcab_re, net.Zcab_im) - 1i * net.Bhalf .* Vb;"
+        "Sfeed = Vb .* conj(Ifeed);"
+        "P_plant = zeros(3, 1);  Q_plant = zeros(3, 1);"
+        "for k = 1:nA"
+        "    P_plant(net.plantOf(k)) = P_plant(net.plantOf(k)) + real(Sfeed(k));"
+        "    Q_plant(net.plantOf(k)) = Q_plant(net.plantOf(k)) + imag(Sfeed(k));"
+        "end"
+        "V_bus = abs(Vb);"
+        "Vp = V(n);"
+        "Spoc = Vp * conj((Vp - net.E) / Zg);      % power into the grid"
+        "P_poc = real(Spoc);  Q_poc = imag(Spoc);  V_poc = abs(Vp);"];
+    addMatlabFunction(sub + "/solve", "solve", ins, outs, body, "net", [200 40 380 360]);
+    for k = 1:2
+        add_block("simulink/Sources/In1", sub + "/" + ins(k), "Port", num2str(k), "Position", [60 60*k 90 60*k+14]);
+        add_line(sub, ins(k) + "/1", "solve/" + k, "autorouting", "smart");
+    end
+    for k = 1:numel(outs)
+        add_block("simulink/Sinks/Out1", sub + "/" + outs(k), "Port", num2str(k), "Position", [480 40*k 510 40*k+14]);
+        add_line(sub, "solve/" + k, outs(k) + "/1", "autorouting", "smart");
+    end
+    mk = Simulink.Mask.create(sub);
+    mk.addParameter("Name", "net", "Prompt", "Network solver data", "Value", "p.net.solver", ...
+        "Evaluate", "on", "Tunable", "off");
+    mk.Description = "Positive-sequence phasor network (collector system, transformers, grid). " + ...
+        "Solves V = Z*I each step. Data from networkSolverData(p).";
 end
 
 function outport(m, name, src, port)
@@ -504,6 +604,22 @@ function setArg(blk, argName, value)
     assert(any(k), "Model block %s has no argument %s", blk, argName);
     ip(k).Value = char(value);
     set_param(blk, "InstanceParameters", ip);
+end
+
+function addMatlabFunction(blk, fname, inNames, outNames, body, paramName, pos)
+    % MATLAB Function block with the given ports; paramName ("" for none)
+    % becomes a Parameter data item resolved from the model / mask workspace
+    add_block("simulink/User-Defined Functions/MATLAB Function", blk, "Position", pos);
+    rt = sfroot;
+    ch = rt.find("-isa", "Stateflow.EMChart", "Path", char(blk));
+    args = inNames;
+    if paramName ~= "", args(end+1) = paramName; end
+    sig = "function [" + strjoin(outNames, ", ") + "] = " + fname + "(" + strjoin(args, ", ") + ")";
+    ch.Script = char(strjoin([sig; "%#codegen"; body(:); "end"], newline));
+    if paramName ~= ""
+        d = ch.find("-isa", "Stateflow.Data", "Name", char(paramName));
+        d.Scope = 'Parameter';
+    end
 end
 
 function registerInProject(file)

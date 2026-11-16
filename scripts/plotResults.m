@@ -11,8 +11,8 @@ function fig = plotResults(source, caseId, opts)
 %                                             (default "auto": MATLAB's theme)
 %   plotResults(..., NewFigure=true)          keep the old figure, open a new one
 %
-%   One tile per signal, stacked with a shared time axis. Powers are shown
-%   in MW. Lines are labelled with caseLabels and coloured with dtuColors
+%   One tile per signal, stacked with a shared time axis. P in MW, Q in
+%   Mvar, V in pu. Lines are labelled with caseLabels and coloured with dtuColors
 %   (the DTU design guide palette; lighter tints on a dark figure).
 %   Returns the figure handle.
 %
@@ -173,7 +173,7 @@ function [time, data] = getSignal(o, sig)
 end
 
 function k = unitScale(sig)
-    if startsWith(sig, "P_")
+    if startsWith(sig, ["P_", "Q_"])
         k = 1e-6;
     else
         k = 1;
@@ -183,6 +183,10 @@ end
 function u = unitName(sig)
     if startsWith(sig, "P_")
         u = "MW";
+    elseif startsWith(sig, "Q_")
+        u = "Mvar";
+    elseif startsWith(sig, "V_")
+        u = "pu";
     else
         u = "-";
     end

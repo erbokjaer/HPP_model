@@ -1,6 +1,6 @@
 # HPP_model: architecture of the hierarchical plant model
 
-Status: **stage 1 built** (2026-11-16): structure, N instances, communication delays and parameter structure, with placeholder logic. Stages 2–5 not started.
+Status: **stages 1–2 built** (2026-11-16): structure, N instances, communication delays, parameter structure, and the phasor network; controller logic and generator models are placeholders. Stages 3–5 not started.
 Values marked *typical* are starting points to be replaced by project data.
 
 ## 1. Decisions
@@ -113,13 +113,17 @@ Single-line, per asset instance k:
 | Asset terminal voltage | WT 0.69 kV, PV and BESS inverters 0.69 kV (aggregated per feeder) |
 | Unit / feeder transformer | 0.69 / 33 kV, rating = asset rating, u_k = 8 %, X/R = 8 |
 | Collector voltage | **33 kV** |
-| Feeder cable | 33 kV XLPE: R = 0.10 Ω/km, X = 0.12 Ω/km, C = 0.25 µF/km; length 5 km (wind), 2 km (PV), 0.5 km (BESS) |
+| Feeder cable | 33 kV XLPE: R = 0.10 Ω/km, X = 0.12 Ω/km, C = 0.25 µF/km; length 5 km (wind), 2 km (PV), 0.5 km (BESS); parallel cables per instance: 2 (wind, 75 MW per instance), 1 (PV, BESS), since a 33 kV feeder carries about 30–40 MW |
 | Main transformer | 33 / 132 kV, 250 MVA, u_k = 12 %, X/R = 40 |
 | POC | 132 kV, export limit `p.grid.Pmax_poc` = 180 MW |
 | Grid | Thevenin source, **SCR = 10** (strong), X/R = 10. Weak-grid case set: SCR = 3 |
 | Frequency | 50 Hz; grid frequency as an input signal (events and ramps from case sets) |
 
-Network solution (RMS): the generator models are current injections; transformers and cables are π-equivalents in a nodal admittance matrix Y. Each step the network solves `V = Y \ (I_inj + I_grid)`, with the grid as a Norton equivalent. This is linear, a few nodes, and runs in a plain MATLAB Function block. Transformer taps and reactive compensation (STATCOM, shunt reactors) can be added later as extra nodes.
+Network solution (RMS, built in stage 2): per unit on the system base 180 MVA. Nodes: asset terminals, feeder starts (MV side of the unit transformers), 33 kV busbar, POC; 2N_total + 2 nodes (14 for N = 2). Transformers are series impedances, cables π-equivalents, the grid a Norton equivalent at the POC. `networkSolverData` builds Y and stores Z = Y⁻¹ once; each step the masked `Network` subsystem computes `V = Z * (I_inj + I_grid)` in a MATLAB Function block. It also returns each plant's P and Q into the busbar (sum over its feeders, including the busbar-end cable charging), the busbar voltage, and P, Q, V at the POC. Transformer taps and reactive compensation (STATCOM, shunt reactors) can be added later as extra nodes.
+
+Generator interface (placeholder until stages 3–4): current source aligned with the terminal voltage, I = (i_p − j·i_q)·V/|V|, so P = |V|·i_p and Q = |V|·i_q. The voltage used is that of the previous step (as a PLL would), which also avoids an algebraic loop through the network.
+
+Results at 150 MW injected, SCR 10, Q = 0 at all assets: P_poc 146.4 MW (losses 2.4 %), Q_poc −21.3 Mvar (cables and transformers), V_poc 0.993 pu, V_bus 0.987 pu, asset terminals 0.985–1.007 pu. With SCR 3, V_poc drops to about 0.94 pu.
 
 ## 6. Communication delays and rates  (typical values)
 
@@ -154,7 +158,7 @@ Each standard model's parameter list is kept with the standard's own names, so v
 Each stage ends with a regression check against the previous stage, as for the per-unit change.
 
 1. **Skeleton. Done (2026-11-16).** New files and folders, N-instance mechanism, communication delays, parameter structure. Placeholder logic in each controller. With delays set to 0, P_poc, P_bess_set and SOC match the earlier single-controller model, except that the HPPC reacts one sample (0.1 s) later at start-up and at the 20 s wind step (one-step measurement memories). A 60 s run takes about 15–20 s, against about 1 s before.
-2. **Network.** Phasor network with the typical values; Q and V appear; controllers pass Q set-points (placeholder Q control).
+2. **Network. Done (2026-11-16).** Phasor network with the typical values; Q and V appear; measurements come from the network; the HPPC splits Q_ref over the plants by rating (open loop). Checked against a hand-calculated load flow (identical P_poc, Q_poc, V_poc, V_bus). New case set `grid_strength` (SCR 10 / 5 / 3). A 60 s run takes about 20 s.
 3. **Wind asset.** IEC 61400-27-1 Type 4A generator system and control; WPPC from the IEC WPP control model. Check against the standard's test cases where possible.
 4. **PV and BESS assets.** WECC REGC_A, REEC_B, REEC_C with SOC; SPPC and BESSC from REPC_A.
 5. **HPPC functions.** P and Q/V control at the POC, frequency response, dispatch, ramp limits, SOC management.
