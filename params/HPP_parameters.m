@@ -20,7 +20,7 @@ function p = HPP_parameters(variant)
     p.pv   = pvParameters();
     p.bess = batteryParameters();
     p.grid = gridParameters();
-    p.ctrl = controllerParameters(p);
+    p.comm = commParameters();
 
     switch variant
         case "default"
@@ -31,6 +31,10 @@ function p = HPP_parameters(variant)
             error("HPP_parameters:unknownVariant", ...
                   "Unknown variant '%s'.", variant);
     end
+
+    % Derived values (controller parameters, asset arguments) last, so they
+    % follow the variant
+    p = deriveParameters(p);
 
     p.meta.variant = variant;
     p.meta.created = string(datetime("now"));

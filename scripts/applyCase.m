@@ -21,7 +21,7 @@ function p = applyCase(p, caseRow)
         end
         p = setfield(p, path{:}, v);
     end
-    p.ctrl = controllerParameters(p);
+    p = deriveParameters(p);
 end
 
 function tf = isFieldPath(s, path)

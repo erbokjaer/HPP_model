@@ -24,6 +24,7 @@ function out = runSweep(setName, opts)
 
     cases = defineCases(setName);
     pBase = HPP_parameters();
+    checkModelBuild(pBase);
 
     in(height(cases)) = Simulink.SimulationInput("HPP");
     for k = 1:height(cases)

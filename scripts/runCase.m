@@ -25,6 +25,7 @@ function out = runCase(setName, caseId, opts)
     [k, caseName] = selectCase(cases, caseId, setName);
 
     p = applyCase(HPP_parameters(), cases(k, :));
+    checkModelBuild(p);
     fprintf("Running %s, case %d%s\n", setName, k, nameSuffix(caseName));
 
     in = Simulink.SimulationInput("HPP");
