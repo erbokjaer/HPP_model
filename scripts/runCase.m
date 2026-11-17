@@ -11,6 +11,15 @@ function out = runCase(setName, caseId, opts)
 %                                             "simscape" (Simscape Electrical,
 %                                             about 5 times slower); default
 %                                             p.net.solverType
+%   runCase(..., FastRestart=true)            keep the model compiled between
+%                                             runs in this MATLAB session: a
+%                                             rerun skips the compile (about
+%                                             20-25 s). Recompiles by itself
+%                                             when a value that is fixed at
+%                                             compile time differs from the
+%                                             previous run (network data, grid
+%                                             strength, layout, delays, time
+%                                             step, network model).
 %
 %   Results go to results/<setName>/case_NNN.mat with out, p and caseInfo.
 %   listCaseSets() shows the available case sets.
@@ -24,7 +33,9 @@ function out = runCase(setName, caseId, opts)
         opts.Mode (1,1) string {mustBeMember(opts.Mode, ["normal","accelerator","rapid"])} = "normal"
         opts.Save (1,1) logical = true
         opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape"])} = ""
+        opts.FastRestart (1,1) logical = false
     end
+    persistent lastSignature     % compile-time values of the model kept compiled
 
     setName = string(setName);
     cases = defineCases(setName);
@@ -40,6 +51,25 @@ function out = runCase(setName, caseId, opts)
     in = in.setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
     in = in.setModelParameter("SimulationMode", modeName(opts.Mode), ...
                               "StopTime", num2str(p.sim.Tstop));
+
+    if opts.FastRestart
+        load_system("HPP");
+        sig = compileSignature(p);
+        if ~isequal(sig, lastSignature) && strcmp(get_param("HPP", "FastRestart"), "on")
+            set_param("HPP", "FastRestart", "off");      % compile-time values changed: recompile
+        end
+        set_param("HPP", "FastRestart", "on");
+        lastSignature = sig;
+        % p also contains compile-time values; they are equal to the compiled
+        % ones here (checked above), so these warnings are expected
+        ids = ["Simulink:Engine:NonTunableVarChangedInFastRestart", ...
+               "Simulink:Engine:NonTunableVarChangedMaxWarnings"];
+        old = arrayfun(@(i) warning("off", i), ids);
+        restore = onCleanup(@() warning(old));
+    elseif bdIsLoaded("HPP") && strcmp(get_param("HPP", "FastRestart"), "on")
+        set_param("HPP", "FastRestart", "off");
+        lastSignature = [];
+    end
 
     out = sim(in);
 
@@ -105,4 +135,13 @@ end
 
 function m = modeName(mode)
     m = struct("normal","normal","accelerator","accelerator","rapid","rapid-accelerator").(mode);
+end
+
+function sig = compileSignature(p)
+    % values that are fixed when HPP.slx is compiled (non-tunable): a Fast
+    % Restart run must recompile when any of them changes
+    g = p.grid;
+    sig = struct("net", p.net, "comm", p.comm, "sim", p.sim, ...
+        "N", [p.wt.N, p.pv.N, p.bess.N], ...
+        "grid", [g.SCR, g.XR, g.Pmax_poc, g.Pbase, g.Vpoc, g.E, g.f0]);
 end
