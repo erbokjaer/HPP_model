@@ -42,9 +42,9 @@ function ctrl = controllerParameters(p)
     for f = string(fieldnames(p.wt.iec.ctrl))'     % IEC 61400-27-1 Type 4A control
         ctrl.wt.par.(f) = p.wt.iec.ctrl.(f);
     end
-    ctrl.pv   = assetCtrl(p.sim.Ts, p.pv.Prated / p.pv.N);
+    ctrl.pv   = assetCtrl(p.sim.Ts, p.pv.nAgg * p.pv.Pn);
     ctrl.pv.par = copyFields(ctrl.pv.par, p.pv.wecc.ctrl);         % WECC REEC_B
-    ctrl.bess = assetCtrl(p.sim.Ts, p.bess.Prated / p.bess.N);
+    ctrl.bess = assetCtrl(p.sim.Ts, p.bess.nAgg * p.bess.Pn);
     ctrl.bess.par.Pmax = (p.bess.Pmax / p.bess.N) / ctrl.bess.Pbase;  % [pu] power limit
     ctrl.bess.par = copyFields(ctrl.bess.par, p.bess.wecc.ctrl);     % WECC REEC_C
     ctrl.bess.par.SOCmin = p.bess.SOCmin;

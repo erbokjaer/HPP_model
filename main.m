@@ -5,10 +5,12 @@
 
 
 % Settings
-setName  = "grid_Pref_Pbess";              % case set in scripts/+caseSets
+setName  = "nominal";                 % case set in scripts/+caseSets
 caseIds  = [];     % names or numbers, e.g. [1 4 7]; [] = all cases
 rerun    = true;                      % false = reuse saved results where they exist
-signals  = ["P_poc", "P_bess_set", "SOC"];
+network  = "nodal";                   % "nodal" (fast) or "simscape" (Simscape Electrical, ~5x slower)
+% network  = "simscape";  
+signals  = ["P_poc", "Q_poc", "V_poc", "P_wpp", "P_spp", "P_bess", "SOC"];
 theme    = "auto";                    % "auto" (MATLAB theme), "light" or "dark"
 exportTo = "";                        % e.g. "figures/handpicked.png"; "" = no export
 
@@ -33,7 +35,7 @@ for k = 1:height(cases)
             % no saved result for this case: run it below
         end 
     end
-    out(k) = runCase(setName, id);
+    out(k) = runCase(setName, id, Network=network);
 end
 
 %% Plot

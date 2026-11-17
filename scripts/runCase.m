@@ -6,6 +6,11 @@ function out = runCase(setName, caseId, opts)
 %   runCase("grid_Pref_Pbess", 4)             case by row number
 %   runCase("oat_Pref", 2, Save=false)        don't write a results file
 %   runCase(..., Mode="rapid")                Rapid Accelerator (needs C compiler)
+%   runCase(..., Network="nodal")             network model for this run:
+%                                             "nodal" (fast nodal solver) or
+%                                             "simscape" (Simscape Electrical,
+%                                             about 5 times slower); default
+%                                             p.net.solverType
 %
 %   Results go to results/<setName>/case_NNN.mat with out, p and caseInfo.
 %   listCaseSets() shows the available case sets.
@@ -18,6 +23,7 @@ function out = runCase(setName, caseId, opts)
         caseId = []
         opts.Mode (1,1) string {mustBeMember(opts.Mode, ["normal","accelerator","rapid"])} = "normal"
         opts.Save (1,1) logical = true
+        opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape"])} = ""
     end
 
     setName = string(setName);
@@ -25,11 +31,13 @@ function out = runCase(setName, caseId, opts)
     [k, caseName] = selectCase(cases, caseId, setName);
 
     p = applyCase(HPP_parameters(), cases(k, :));
+    if opts.Network ~= "", p.net.solverType = opts.Network; end
     checkModelBuild(p);
-    fprintf("Running %s, case %d%s\n", setName, k, nameSuffix(caseName));
+    fprintf("Running %s, case %d%s, %s network\n", setName, k, nameSuffix(caseName), p.net.solverType);
 
     in = Simulink.SimulationInput("HPP");
     in = in.setVariable("p", p);
+    in = in.setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
     in = in.setModelParameter("SimulationMode", modeName(opts.Mode), ...
                               "StopTime", num2str(p.sim.Tstop));
 

@@ -1,11 +1,19 @@
 function bess = batteryParameters()
 %BATTERYPARAMETERS  Battery plant parameters (placeholder values).
 %   Sign convention: positive power = discharging (export to grid).
-%   N asset instances share the plant equally. Changing N requires
-%   rebuilding the model with buildHPP.
 
-    bess.N      = 2;            % [-]   asset instances in the model
-    bess.Prated = 30e6;         % [W]   converter rating, plant total (pu base)
+    % Electrical layout: nFeeders feeders with nPerFeeder units each; every
+    % unit is one asset instance (own converter model and controller) at its
+    % own network node, so N = nFeeders * nPerFeeder (derived). One unit can
+    % stand for nAgg identical real units at the same place (its transformer
+    % is scaled with nAgg). Changing N requires rebuilding the model with
+    % buildHPP; the collector data are in networkParameters.
+    % Test layout: one BESS unit at the 33 kV HPP busbar.
+    bess.Pn         = 30e6;     % [W]   converter rating of one unit
+    bess.nAgg       = 1;        % [-]
+    bess.nFeeders   = 1;        % [-]
+    bess.nPerFeeder = 1;        % [-]
+    % bess.N and bess.Prated (pu base) are derived in deriveParameters
     bess.Pmax   = 30e6;         % [W]   max charge/discharge power, plant total
     bess.E      = 60e6*3600;    % [J]   energy capacity, plant total (60 MWh)
     bess.SOC0   = 0.5;          % [-]   initial state of charge

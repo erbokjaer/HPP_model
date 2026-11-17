@@ -9,7 +9,7 @@ Values marked *typical* are starting points to be replaced by project data.
 |---|---|
 | Simulation type in Simulink | **RMS (positive-sequence phasor)**. EMT validation is done in PSCAD. |
 | Which controllers become DLLs | **All controllers**: HPP controller, the three plant controllers and the three asset controllers. They are our own models, not vendor DLLs. |
-| Number of assets | **N per asset type**, set in the parameters. Default **N = 2** for wind, PV and BESS. |
+| Number of assets | **Per plant: `nFeeders` × `nPerFeeder` units**, each its own asset instance (converter model and controller) at its own network node, so N = nFeeders · nPerFeeder. Test layout: wind 1 × 2, PV 2 × 1, BESS 1 × 1 (N = 2 / 2 / 1). |
 | Asset model standards | Wind: **IEC 61400-27-1 Ed. 2, Type 4** (full converter). PV and BESS: **WECC second-generation generic models** (REGC / REEC / REPC). |
 | Collector system and grid | Typical values (section 5). Own phasor network model in plain Simulink: no Simscape / Specialized Power Systems dependency. |
 | Communication delays | Included from the start, typical values (section 6). |
@@ -59,7 +59,7 @@ The plant controllers use fixed-width vector ports (width N, from their model wo
 
 **Diagram layout (2026-11-16).** `HPP.slx` is organised as six subsystems (TSO, HPP controller, Wind / PV / BESS plant, Network, Logging) connected by virtual buses in SI units. Each subsystem converts to its controller's per-unit base and applies the communication delays of the links it receives. Controller models keep flat scalar ports for the DLL interface; Bus Selectors and Bus Creators sit around them. Forward signals are lines; feedback and logging signals are colour-coded Goto/From pairs (orange plant measurements, green network, grey logging). Each signal path between levels is one masked "link" block (gain, memory, transport delay). The network is a masked subsystem inside `HPP.slx` rather than a separate `models/network/` file, since its size depends on N and it is not a DLL. The reorganisation changed no results (largest relative difference 6e-13 on all logged signals). HPPC inports are ordered per source (TSO, POC, wind, PV, BESS).
 
-**Aggregation.** One asset instance can stand for several identical physical units (`nAgg`). With N = 2 and the current plant sizes, each instance is half a plant: one feeder, so plant totals stay unchanged. With `nAgg = 1` an instance is one physical turbine or inverter.
+**Aggregation.** One unit can stand for `nAgg` identical physical units at the same place (its unit transformer is scaled with `nAgg`), and one modelled feeder for `cable.nPar` identical parallel feeders (`p.net.<type>.cable`). The test layout keeps the plant sizes with few converter models: wind 2 units × 15 turbines of 5 MW on one feeder that stands for 15 identical feeders (nPar = 15), PV 2 feeders with one unit of 5 inverter stations each, one 30 MW BESS. A full layout (e.g. wind 15 feeders × 2 turbines, PV 2 feeders × 5 stations, all `nAgg` and `nPar` = 1: 41 converter models, 85 nodes) gives practically the same steady state (P_poc 149.46 against 149.40 MW in a static check with all units at the same power).
 
 ## 4. Interfaces
 
@@ -106,25 +106,43 @@ Functions, stage 5: P control at POC with ramp limits, Q / V / PF control at POC
 
 ## 5. Network and grid  (typical values)
 
-Single-line, per asset instance k:
-`asset LV terminal ── unit transformer ── feeder cable ── 33 kV busbar ── main transformer ── POC 132 kV ── grid`
+Layout (revised 2026-11-16, stage 4b): every unit has its own unit transformer and is tapped off a radial feeder; the feeders of a plant end on its collector bus.
 
-| Item | Typical value |
+```
+wind:  turbine 0.69 kV ─ 0.69/10 kV ─ tap ┐ 10 kV feeders ─ 10 kV wind bus ─ 10/33 kV ─┐
+PV:    station 0.6 kV  ─ 0.6/33 kV  ─ tap ┘ 33 kV feeders ─────────────────────────────┤ 33 kV HPP busbar ─ 33/132 kV ─ POC ─ grid
+BESS:  unit 0.69 kV    ─ 0.69/33 kV ─ short 33 kV cable ───────────────────────────────┘
+```
+
+| Item | Typical value (`networkParameters`) |
 |---|---|
-| Asset terminal voltage | WT 0.69 kV, PV and BESS inverters 0.69 kV (aggregated per feeder) |
-| Unit / feeder transformer | 0.69 / 33 kV, rating = asset rating, u_k = 8 %, X/R = 8 |
-| Collector voltage | **33 kV** |
-| Feeder cable | 33 kV XLPE: R = 0.10 Ω/km, X = 0.12 Ω/km, C = 0.25 µF/km; length 5 km (wind), 2 km (PV), 0.5 km (BESS); parallel cables per instance: 2 (wind, 75 MW per instance), 1 (PV, BESS), since a 33 kV feeder carries about 30–40 MW |
-| Main transformer | 33 / 132 kV, 250 MVA, u_k = 12 %, X/R = 40 |
+| Wind unit transformer | 0.69 / 10 kV, 5.6 MVA per turbine, u_k = 7 %, X/R = 7 |
+| Wind feeders | 10 kV, 630 mm² Al: R = 0.05 Ω/km, X = 0.095 Ω/km, C = 0.5 µF/km; 2 km to the first turbine, 1 km between turbines (about 10 MW per feeder) |
+| Wind transformer | 10 / 33 kV, 170 MVA, u_k = 10 %, X/R = 30 |
+| PV unit transformer | 0.6 / 33 kV, 5.5 MVA per inverter station, u_k = 6 %, X/R = 7 |
+| PV feeders | 33 kV, 240 mm² Al: R = 0.10 Ω/km, X = 0.12 Ω/km, C = 0.25 µF/km; 2 km to the first station, 0.5 km between stations |
+| BESS | 0.69 / 33 kV, 33 MVA, u_k = 8 %; 0.3 km 33 kV cable to the HPP busbar |
+| HPP transformer | 33 / 132 kV, 250 MVA, u_k = 12 %, X/R = 40 (tap changer: later) |
 | POC | 132 kV, export limit `p.grid.Pmax_poc` = 180 MW |
 | Grid | Thevenin source, **SCR = 10** (strong), X/R = 10. Weak-grid case set: SCR = 3 |
 | Frequency | 50 Hz; grid frequency as an input signal (events and ramps from case sets) |
 
-Network solution (RMS, built in stage 2): per unit on the system base 180 MVA. Nodes: asset terminals, feeder starts (MV side of the unit transformers), 33 kV busbar, POC; 2N_total + 2 nodes (14 for N = 2). Transformers are series impedances, cables π-equivalents, the grid a Norton equivalent at the POC. `networkSolverData` builds Y and stores Z = Y⁻¹ once; each step the masked `Network` subsystem computes `V = Z * (I_inj + I_grid)` in a MATLAB Function block. It also returns each plant's P and Q into the busbar (sum over its feeders, including the busbar-end cable charging), the busbar voltage, and P, Q, V at the POC. Transformer taps and reactive compensation (STATCOM, shunt reactors) can be added later as extra nodes.
+Network solution (RMS): per unit on the system base 180 MVA, ideal transformer ratios. `networkSolverData` builds the nodal admittance matrix Y from the layout (asset terminals, feeder taps, plant collector buses, HPP busbar, POC; 13 nodes in the test layout) and stores Z = Y⁻¹ once; each step the masked `Network` subsystem computes `V = Z * (I_inj + I_grid)` in a MATLAB Function block. Each plant's P and Q are the flows of its branches into the 33 kV HPP busbar (wind: its 10/33 kV transformer; PV and BESS: their feeders, including the busbar-end cable charging): these are the plant measurement points. It also returns the HPP busbar voltage and P, Q, V at the POC. Transformer taps and reactive compensation (STATCOM, shunt reactors) can be added later as extra nodes or branches.
+
+**Two network models, chosen per run (branch `grid-components`, 2026-11-17).** The `Network` block in `HPP.slx` is a Variant Subsystem with two choices built from the same layout parameters and with the same ports: `Nodal` (the solver above, fast) and `Simscape` (standard Simscape Electrical three-phase blocks solved in **frequency-and-time mode**: phasors around 50 Hz, one Solver Configuration, local Backward Euler at `p.sim.Ts`, fixed cost with one iteration). The variant control variable `HPP_network` (1 nodal, 2 Simscape, from `networkCode`) is set per run by `runCase(..., Network="nodal" | "simscape")`, `runSweep(..., Network=...)` and the `network` setting in `main.m`; the default is `p.net.solverType` ("simscape" on this branch). The inactive choice is not compiled. No rebuild is needed to switch.
+
+- Grid: Controlled Voltage Source (Three-Phase), magnitude E·V_poc as line rms with the dips of `p.grid.dip`, behind a series R-L Z_g from SCR and X/R.
+- HPP transformer 33/132 kV and wind transformer 10/33 kV: Two-Winding Transformer (Three-Phase), Yg/Yg, with a magnetizing branch (`Rm`, `Xm` in `p.net.main` and `p.net.wt.plant`; 1000 pu and 500 pu: 0.1 % no-load loss, 0.2 % magnetizing current). The Simscape model needs a finite branch in this mode; the nodal model has the same branch as a shunt at the 33 kV side (HPP transformer) and the collector side (wind transformer), so both describe the same transformers.
+- Feeder segments: π model from RLC (Three-Phase) blocks (series R-L, half the charging capacitance to ground at each end). The library Transmission Line (Three-Phase) block was not used: in this mode it produced a constant, non-physical 100 Hz power ripple (0.6 MW at 147 MW) even with constant converter currents; the equivalent R-L-C π has none.
+- Unit transformers: series R-L at the collector voltage (u_k and X/R on the rating × nAgg). With real transformer blocks the network was 3.5 times slower.
+- Converter interface (subsystem per asset): Controlled Current Source (Three-Phase) with magnitude/phase inputs from the asset's current phasor; the terminal voltage comes from a phase voltage sensor turned into a phasor by the space-phasor transform at the nominal frequency (sampled with a Digital Clock), one step old as before. No PLL is needed because the mode returns exact 50 Hz samples.
+- Measurements: Power Sensor (Three-Phase) between each plant node and the HPP busbar (plant measurement points) and at the POC; voltages from the same phasor transform.
+
+Results (test layout), Simscape against nodal, with the same magnetizing branch in both: nominal P_poc 146.526 against 146.525 MW, Q_poc −10.900 against −10.883 Mvar, P_wpp 132.133 against 132.131 MW; dip 0.5 V_poc 0.564 pu in both, Q_wpp 51.33 against 51.35 Mvar, P_poc during the dip 85.55 against 85.50 MW, largest P_poc difference over the dip 0.10 MW (one step at fault clearing), median 0.001 MW. (Before the branch was added to the nodal model, P_poc differed by 0.84 MW: the magnetizing loss with 500 pu.) +0.2 Hz and BESS at SOCmin also gave the same results. No ripple (below 1e-10 MW); plant Q loops settle to 0. Run time of a 60 s case including compilation: nodal about 45–60 s, Simscape about 120–135 s. Layout of the `Network` subsystem: current injections (left), one row per converter in each plant area (converter interface, unit impedance, feeder segment), plant transformer and meter, then a grid column (grid voltage with dips; HPP transformer, POC meter, Z_g and E; bus and POC voltages with the Solver Configuration) and the output buses (right). Electrical nodes are joined by Connection Labels (`wpp_collector`, `tap_1`, `HPP_bus`, `POC`), signals by local Goto/From. Standalone test models: `experiments/simscapeGrid/ftGridTest.m`.
 
 Generator interface (wind: behind the Type 4A generator system since stage 3; PV/BESS: placeholder until stage 4): current source aligned with the terminal voltage, I = (i_p − j·i_q)·V/|V|, so P = |V|·i_p and Q = |V|·i_q. The voltage used is that of the previous step (as a PLL would), which also avoids an algebraic loop through the network.
 
-Results at 150 MW injected, SCR 10, Q = 0 at all assets: P_poc 146.4 MW (losses 2.4 %), Q_poc −21.3 Mvar (cables and transformers), V_poc 0.993 pu, V_bus 0.987 pu, asset terminals 0.985–1.007 pu. With SCR 3, V_poc drops to about 0.94 pu.
+Results with the stage-4b layout (nominal case, plant Q loops closed at their measurement points): P_poc 146.95 MW (146.47 MW with the stage-2 network), Q_poc −10.4 Mvar, V_poc 0.999 pu, V_bus 0.998 pu. Dip 0.5: V_poc 0.56 pu, P_poc back at 146.7 MW after 1 s. A 60 s run takes about 11 s (5 converter models).
 
 ## 6. Communication delays and rates  (typical values)
 
@@ -146,7 +164,7 @@ p.sim            solver step 1 ms, stop time
 p.grid           POC, base, grid SCR, X/R, frequency
 p.net            transformers, cables, lengths per feeder
 p.comm           communication delays
-p.wt  / p.pv / p.bess   N, nAgg, rating, asset-model parameters (IEC / WECC tables)
+p.wt  / p.pv / p.bess   nFeeders, nPerFeeder, nAgg, Pn (N, Prated derived), asset-model parameters
 p.ctrl.hppc      Ts, Pbase, par
 p.ctrl.wppc / sppc / bessc      Ts, Pbase, par
 p.ctrl.wt / pv / bess           Ts, Pbase, par   (one set, shared by all N instances;
@@ -177,7 +195,7 @@ Afterwards: code generation of every controller (needs the Coder products and a 
 
 ## 9. Decided after review (2026-11-16)
 
-- **Plant sizes:** 150 MW wind (10 × 15 MW; as 2 instances × 5 turbines), 50 MW PV, 30 MW / 60 MWh BESS, 180 MW POC export limit.
+- **Plant sizes:** 150 MW wind (30 × 5 MW turbines since stage 4b, 10 kV collector), 50 MW PV (10 × 5 MW stations), 30 MW / 60 MWh BESS, 180 MW POC export limit.
 - **POC voltage:** 132 kV.
 - **Grid code:** Energinet TF 3.3.1 as the reference for HPPC functions (FSM, LFSM-O/U, Q / U control), but strict compliance is not a goal for now.
 - **Wind model:** IEC 61400-27-1 **Type 4A** (no drive-train model) for now.

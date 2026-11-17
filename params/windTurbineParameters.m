@@ -1,15 +1,20 @@
 function wt = windTurbineParameters()
 %WINDTURBINEPARAMETERS  Wind power plant parameters (placeholder values).
-%
-%   The plant is modelled as N asset instances. Each instance aggregates
-%   nAgg identical turbines (one collector feeder); nAgg = 1 means one
-%   instance per physical turbine. Changing N requires rebuilding the
-%   model with buildHPP.
 
-    wt.N      = 2;      % [-]  asset instances in the model (feeders)
-    wt.nAgg   = 5;      % [-]  turbines represented by one instance
-    wt.Pn     = 15e6;   % [W]  rated power per turbine
-    % wt.Prated (plant rating, N*nAgg*Pn) is derived in deriveParameters
+    % Electrical layout: nFeeders feeders with nPerFeeder units each; every
+    % unit is one asset instance (own converter model and controller) at its
+    % own network node, so N = nFeeders * nPerFeeder (derived). One unit can
+    % stand for nAgg identical real units at the same place (its transformer
+    % is scaled with nAgg). Changing N requires rebuilding the model with
+    % buildHPP; the collector data are in networkParameters.
+    % Test layout: 1 feeder with 2 units of 15 turbines each = 150 MW; it
+    % stands for 15 identical feeders of 2 turbines (net.wt.cable.nPar = 15).
+    % Full layout, e.g.: nFeeders = 15, nPerFeeder = 2, nAgg = 1, nPar = 1.
+    wt.Pn         = 5e6;    % [W]  rated power per turbine
+    wt.nAgg       = 15;     % [-]  turbines represented by one unit
+    wt.nFeeders   = 1;      % [-]  feeders in the model
+    wt.nPerFeeder = 2;      % [-]  units along each feeder
+    % wt.N and wt.Prated (= N*nAgg*Pn) are derived in deriveParameters
 
     % Placeholder available-power profile (same for all instances)
     wt.Pavail0    = 0.6;   % [pu] initial available power

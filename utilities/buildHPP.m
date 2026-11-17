@@ -30,6 +30,10 @@ function buildHPP(opts)
 %   HPP_parameters() via the model workspace.
 %
 %   Changing N (p.wt.N, p.pv.N, p.bess.N) requires rerunning buildHPP.
+%
+%   The Network block holds both network models as variants (nodal solver
+%   and Simscape Electrical); the active one is chosen per run, see runCase
+%   (Network option) and p.net.solverType.
 
     arguments
         opts.All (1,1) logical = false
@@ -208,7 +212,7 @@ function buildTop(p, folder)
         buildPlantSub(m + "/" + plants(i).title, p, plants(i), i, offset);
         offset = offset + p.(plants(i).t).N;
     end
-    buildNetwork(m + "/Network");
+    buildNetworkVariants(m + "/Network", p);       % nodal and Simscape, chosen per run
     buildLogging(m + "/Logging");
 
     % ---- fixed top-level layout (left to right), before drawing lines ----
@@ -277,6 +281,8 @@ function buildTop(p, folder)
     ws = get_param(m, "ModelWorkspace");
     assignin(ws, "buildInfo", struct("N_wt", p.wt.N, "N_pv", p.pv.N, "N_bess", p.bess.N, ...
         "built", string(datetime("now"))));
+    % active network variant for runs started from the editor (runCase sets it per run)
+    assignin(ws, "HPP_network", networkCode(p.net.solverType));
     save_system(m, fullfile(folder, "HPP.slx"));
     fprintf("Built HPP.slx with N = %d wind, %d PV, %d BESS asset instances.\n", p.wt.N, p.pv.N, p.bess.N);
 end
@@ -362,22 +368,22 @@ function buildNetwork(sys)
         "Zg = complex(net.Zg_re, net.Zg_im);"
         "I = complex(zeros(n, 1), zeros(n, 1));"
         "I(1:nA) = complex(I_re(:), I_im(:));"
-        "I(n) = I(n) + E / Zg;                     % grid Norton source at the POC (E: grid voltage, incl. dips)"
+        "I(net.poc) = I(net.poc) + E / Zg;         % grid Norton source at the POC (E: grid voltage, incl. dips)"
         "V = Z * I;"
         "V_re = real(V(1:nA));"
         "V_im = imag(V(1:nA));"
-        "% power each feeder delivers into the busbar (incl. its bus-end charging)"
-        "Vb = V(n-1);"
-        "Vc = V(nA+1:2*nA);"
-        "Ifeed = (Vc - Vb) ./ complex(net.Zcab_re, net.Zcab_im) - 1i * net.Bhalf .* Vb;"
-        "Sfeed = Vb .* conj(Ifeed);"
+        "% power each plant delivers into the HPP busbar (its measurement point):"
+        "% flows of its plant branches at the busbar end, incl. bus-end charging"
+        "Vb = V(net.bus);"
+        "Ibr = (V(net.brFrom) - Vb) ./ complex(net.brZre, net.brZim) - 1i * net.brB .* Vb;"
+        "Sbr = Vb .* conj(Ibr);"
         "P_plant = zeros(3, 1);  Q_plant = zeros(3, 1);"
-        "for k = 1:nA"
-        "    P_plant(net.plantOf(k)) = P_plant(net.plantOf(k)) + real(Sfeed(k));"
-        "    Q_plant(net.plantOf(k)) = Q_plant(net.plantOf(k)) + imag(Sfeed(k));"
+        "for j = 1:numel(Sbr)"
+        "    P_plant(net.brPlant(j)) = P_plant(net.brPlant(j)) + real(Sbr(j));"
+        "    Q_plant(net.brPlant(j)) = Q_plant(net.brPlant(j)) + imag(Sbr(j));"
         "end"
         "V_bus = abs(Vb);"
-        "Vp = V(n);"
+        "Vp = V(net.poc);"
         "Spoc = Vp * conj((Vp - E) / Zg);          % power into the grid"
         "P_poc = real(Spoc);  Q_poc = imag(Spoc);  V_poc = abs(Vp);"];
     addMatlabFunction(sys + "/solve", "solve", ["I_re", "I_im", "E"], outs, body, "net", [0 0 160 300]);
@@ -1951,4 +1957,487 @@ function buildPlantCtrlRepc(name, folder)
     hOut = ctrlOutputs(mdl, outs, srcs, max([r1 r2 r3 r4 r5]) + 110, cm);
     alignColumns(hIn, {[h1 h2 h3], [h4 h5]}, hOut);
     ctrlSave(mdl, folder);
+end
+
+%% ===================================================================
+%  Network as a Simscape Electrical model (branch grid-components)
+%
+%  Same ports as buildNetwork: in 1..3 current injections per plant
+%  (buses I_re, I_im, system pu); out 1 network bus (V_re, V_im of every
+%  asset terminal one step old, P_plant / Q_plant [W / var], V_bus, f),
+%  out 2 POC bus (P_poc, Q_poc, V_poc).
+%  Inside: standard three-phase blocks solved in frequency-and-time mode
+%  (phasors around 50 Hz), one Solver Configuration:
+%    converter interface -- unit impedance (series R-L, unit transformer
+%    referred to the collector voltage) -- pi feeder segments -- plant
+%    node (wind: 10/33 kV transformer) -- plant meter -- 33 kV HPP bus --
+%    33/132 kV transformer -- POC meter -- grid (E behind Zg, E with dips)
+%  Layout from p.<type>.nFeeders / nPerFeeder and p.net (networkParameters);
+%  block parameters are expressions in p, so case values apply.
+%  ===================================================================
+function buildNetworkVariants(sys, p)
+    % Variant Subsystem "Network" with the two network models as choices:
+    %   Nodal    (HPP_network == 1): nodal solver Z = inv(Y), fast
+    %   Simscape (HPP_network == 2): Simscape Electrical, frequency-and-time mode
+    % Both have the same ports. The variant control variable HPP_network is
+    % set per run by runCase (networkCode(p.net.solverType)); the default for
+    % runs from the editor is in the model workspace. Activation at update
+    % diagram: the inactive choice is not compiled.
+    add_block("simulink/Ports & Subsystems/Variant Subsystem", sys);
+    for b = string(find_system(sys, "SearchDepth", 1, "MatchFilter", @Simulink.match.allVariants, "Type", "Block"))'
+        if b ~= sys, delete_block(b); end
+    end
+    L = find_system(sys, "SearchDepth", 1, "FindAll", "on", "Type", "line");
+    if ~isempty(L), delete_line(L); end
+    buildNetwork(sys + "/Nodal");
+    buildNetworkSimscape(sys + "/Simscape", p);
+    set_param(sys + "/Nodal", "VariantControl", "HPP_network == 1", "Position", [200 50 400 250]);
+    set_param(sys + "/Simscape", "VariantControl", "HPP_network == 2", "Position", [200 300 400 500]);
+    tags = ["wpp", "spp", "bess"];
+    for i = 1:3
+        add_block("simulink/Sources/In1", sys + "/I " + tags(i), "Port", num2str(i), "Position", [40 40*i 70 40*i+14]);
+    end
+    add_block("simulink/Sinks/Out1", sys + "/network", "Port", "1", "Position", [520 60 550 74]);
+    add_block("simulink/Sinks/Out1", sys + "/POC meas", "Port", "2", "Position", [520 120 550 134]);
+    set_param(sys, "VariantActivationTime", "update diagram", "Description", ...
+        "Network model, chosen per run: Nodal (HPP_network = 1, fast nodal solver) or Simscape " + ...
+        "(HPP_network = 2, Simscape Electrical in frequency-and-time mode). See runCase, option Network.");
+end
+
+function buildNetworkSimscape(sys, p)
+    newSubsystem(sys);
+    load_system("ee_lib");
+    lib = eeLibrary();
+    types = ["wt", "pv", "bess"];  tags = ["wpp", "spp", "bess"];
+    titles = ["Wind plant: converters, unit impedances, 10 kV feeders, 10-33 kV transformer", ...
+              "PV plant: converters, unit impedances, 33 kV feeders", "BESS: converter, unit impedance, cable"];
+    N = arrayfun(@(t) p.(t).N, types);  nA = sum(N);
+    H = @(b) get_param(sys + "/" + b, "PortHandles");
+    PL = @(a, b) add_line(sys, a, b);                     % physical line, straight when aligned
+    f0 = "p.grid.f0";
+    cm.ref  = ["Ire_" + (1:nA), "Iim_" + (1:nA), "Ire_" + tags, "Iim_" + tags, "t", "E_mag", "E_ph"];
+    cm.meas = ["Vre_" + (1:nA), "Vim_" + (1:nA), "V_re_prev", "V_im_prev", "P_" + tags, "Q_" + tags, ...
+               "P_plant", "Q_plant", "V_bus", "P_poc", "Q_poc", "V_poc"];
+    hMid = [];
+
+    % ================= inputs: current injections and time =================
+    for t = 1:3
+        add_block("simulink/Sources/In1", sys + "/I " + tags(t), "Port", num2str(t), "Position", [0 0 30 14]);
+        add_block("simulink/Signal Routing/Bus Selector", sys + "/I sel " + tags(t), "OutputSignals", "I_re,I_im", ...
+            "ShowName", "off", "Position", [0 0 6 50]);
+    end
+    add_block("simulink/Sources/Digital Clock", sys + "/clock", "SampleTime", "p.sim.Ts", "Position", [0 0 40 24]);
+    rows = {};  k0 = 0;
+    for t = 1:3
+        n = N(t);  ks = k0 + (1:n);
+        if n > 1
+            add_block("simulink/Signal Routing/Demux", sys + "/Ire " + tags(t), "Outputs", num2str(n), "ShowName", "off", "Position", [0 0 6 40*n]);
+            add_block("simulink/Signal Routing/Demux", sys + "/Iim " + tags(t), "Outputs", num2str(n), "ShowName", "off", "Position", [0 0 6 40*n]);
+            outsRe = [num2cell((2:n)'), num2cell("Ire_" + ks(2:end)')];
+            outsIm = [num2cell((2:n)'), num2cell("Iim_" + ks(2:end)')];
+            rows{end+1} = [stg("I " + tags(t), 0), stg("I sel " + tags(t), 1, {}, {2, "Iim_" + tags(t)}), stg(">Ire_" + tags(t))]; %#ok<AGROW>
+            rows{end+1} = [stg("@Ire_" + tags(t), 0), stg("Ire " + tags(t), 1, {}, outsRe), stg(">Ire_" + ks(1))]; %#ok<AGROW>
+            rows{end+1} = [stg("@Iim_" + tags(t), 0), stg("Iim " + tags(t), 1, {}, outsIm), stg(">Iim_" + ks(1))]; %#ok<AGROW>
+        else
+            rows{end+1} = [stg("I " + tags(t), 0), stg("I sel " + tags(t), 1, {}, {2, "Iim_" + ks(1)}), stg(">Ire_" + ks(1))]; %#ok<AGROW>
+        end
+        k0 = k0 + n;
+    end
+    rows{end+1} = [stg("clock", 0), stg(">t")];
+    [~, hIn, rIn] = ctrlSection(sys, "Current injections (system pu) and time", rows, 40, 20, cm, areaColor("interface"));
+
+    % ================= plants: one row per converter =================
+    xC = rIn + 120;  y = 20;  k = 0;  rMax = 0;
+    for t = 1:3
+        q = p.(types(t));  tt = types(t);  pn = "p.net." + tt;
+        hasTr = p.net.(tt).plant.S > 0;
+        cab = pn + ".cable";
+        Ib = "p.grid.Pbase/(sqrt(3)*" + pn + ".Vcol)";
+        Zu = "(" + pn + ".unit.uk*" + pn + ".Vcol^2/(" + pn + ".unit.S*p." + tt + ".nAgg))";
+        blks = strings(0);  y = y + 40;  yPlant = [];
+        for f = 1:q.nFeeders
+            for i = 1:q.nPerFeeder
+                k = k + 1;  s = sprintf("%d", k);
+                convBlock(sys, "converter " + s, Ib, pn + ".Vcol", [0 0 140 120], lib);
+                [b, ~, bl] = rowChain(sys, xC, y, [stg("@Ire_" + s, 0), stg("converter " + s, 1, {2, "@Iim_" + s; 3, "@t"}, {2, "Vim_" + s}), ...
+                    stg(">Vre_" + s)], cm);
+                blks = [blks, bl]; %#ok<AGROW>
+                % physical row: converter ~ -- unit Z -- feeder segment -- node label
+                cp = get_param(H("converter " + s).RConn(1), "Position");
+                add_block(lib("Passive/RLC Assemblies/RLC (Three-Phase)"), sys + "/unit Z " + s, "component_structure", ...
+                    "ee.enum.rlc.structure.SeriesRL", "R", Zu + "/sqrt(1+" + pn + ".unit.XR^2)", ...
+                    "L", Zu + "*" + pn + ".unit.XR/sqrt(1+" + pn + ".unit.XR^2)/(2*pi*" + f0 + ")", "Position", [0 0 60 40]);
+                alignPhys(sys + "/unit Z " + s, cp(1) + 170, cp(2));
+                if i == 1, len = cab + ".len1"; else, len = cab + ".len"; end
+                piBlock(sys, "feeder " + s, cab, len, f0, [0 0 80 50], lib);
+                zp = get_param(H("unit Z " + s).RConn(1), "Position");
+                alignPhys(sys + "/feeder " + s, zp(1) + 80, zp(2));
+                PL(H("converter " + s).RConn(1), H("unit Z " + s).LConn(1));
+                PL(H("unit Z " + s).RConn(1), H("feeder " + s).LConn(1));
+                % far end of this segment = tap of unit k; near end = previous tap or the collector
+                tl = "";
+                if i < q.nPerFeeder
+                    tl = tapLabel(sys, "tap_" + s, H("feeder " + s).LConn(1));
+                end
+                if i == 1
+                    near = tags(t) + "_collector";
+                else
+                    near = "tap_" + (k-1);
+                end
+                lb = nodeLabel(sys, near, H("feeder " + s).RConn(1), "right");
+                blks = [blks, "unit Z " + s, "feeder " + s, lb]; %#ok<AGROW>
+                if tl ~= "", blks(end+1) = tl; end %#ok<AGROW>
+                yPlant(end+1) = zp(2); %#ok<AGROW>
+                low = b;
+                for x_ = ["unit Z " + s, "feeder " + s, tl]
+                    if x_ ~= "", pp_ = get_param(sys + "/" + x_, "Position"); low = max(low, pp_(4)); end
+                end
+                y = low + 50;
+            end
+        end
+        % plant column: collector label (-- plant transformer) -- meter -- HPP bus label
+        fp = get_param(H("feeder " + (k - q.N + 1)).RConn(1), "Position");
+        xP = fp(1) + 200;  yP = round(mean(yPlant));
+        meterBlock(sys, tags(t) + " meter", [0 0 90 80], lib);
+        if hasTr
+            trBlock(sys, tags(t) + " transformer", pn + ".plant", pn + ".Vcol", "p.net.Vhpp", [0 0 90 70], lib);
+            alignPhys(sys + "/" + tags(t) + " transformer", xP + 60, yP);
+            lc = nodeLabel(sys, tags(t) + "_collector", H(tags(t) + " transformer").LConn(1), "left");
+            tp = get_param(H(tags(t) + " transformer").RConn(1), "Position");
+            alignPhys(sys + "/" + tags(t) + " meter", tp(1) + 50, tp(2));
+            PL(H(tags(t) + " transformer").RConn(1), H(tags(t) + " meter").LConn(1));
+            blks = [blks, tags(t) + " transformer", lc]; %#ok<AGROW>
+        else
+            alignPhys(sys + "/" + tags(t) + " meter", xP + 60, yP);
+            lc = nodeLabel(sys, tags(t) + "_collector", H(tags(t) + " meter").LConn(1), "left");
+            blks(end+1) = lc; %#ok<AGROW>
+        end
+        lb = nodeLabel(sys, "HPP_bus", H(tags(t) + " meter").RConn(1), "right");
+        mp = get_param(sys + "/" + tags(t) + " meter", "Position");
+        pq = ["P_", "Q_"] + tags(t);
+        for j = 1:2
+            g = addGoto(sys, pq(j), tagColor(cm, pq(j)));
+            gp = get_param(sys + "/" + g, "Position");
+            yo = portY(sys + "/" + tags(t) + " meter", "out", j);
+            set_param(sys + "/" + g, "Position", [mp(3) + 120, yo - 11, mp(3) + 120 + gp(3) - gp(1), yo + 11]);
+            add_line(sys, tags(t) + " meter/" + j, g + "/1", "autorouting", "on");
+            blks(end+1) = g; %#ok<AGROW>
+        end
+        blks = [blks, tags(t) + " meter", lb]; %#ok<AGROW>
+        h = areaAround(sys, titles(t), blks, areaColor("asset"));
+        hMid(end+1) = h; %#ok<AGROW>
+        r = get_param(h, "Position");  rMax = max(rMax, r(3));
+        y = r(4) + 20;
+    end
+
+    % ================= grid column =================
+    % (1) grid voltage magnitude with dips (p.grid.dip), line rms
+    xH = rMax + 80;
+    add_block("simulink/Sources/Constant", sys + "/E0", "Value", "p.grid.E", "Position", [0 0 50 24], "ShowName", "off");
+    add_block("simulink/Sources/Step", sys + "/dip start", "Time", "p.grid.dip.t0", "Before", "0", ...
+        "After", "p.grid.dip.depth", "SampleTime", "0", "Position", [0 0 30 30]);
+    add_block("simulink/Sources/Step", sys + "/dip end", "Time", "p.grid.dip.t0 + p.grid.dip.dur", "Before", "0", ...
+        "After", "p.grid.dip.depth", "SampleTime", "0", "Position", [0 0 30 30]);
+    nb(sys, "sum", "E grid", "Inputs", "+-+");  set_param(sys + "/E grid", "Position", [0 0 30 110]);
+    nb(sys, "gain", "to V", "Gain", "p.grid.Vpoc");
+    add_block("simulink/Sources/Constant", sys + "/E phase", "Value", "0", "Position", [0 0 40 24], "ShowName", "off");
+    rows = {[stg("E0", 0), stg("E grid", 1, {2, "dip start"; 3, "dip end"}), stg("to V"), stg(">E_mag")]
+            [stg("E phase", 0), stg(">E_ph")]};
+    [yG, hDip] = ctrlSection(sys, "Grid voltage E with dips (line rms) and phase", rows, xH + 40, 20, cm, areaColor("interface"));
+
+    % (2) HPP bus -- HPP transformer -- POC meter -- Zg -- E
+    yH = yG + 120;  blks = strings(0);
+    trBlock(sys, "HPP transformer", "p.net.main", "p.net.Vhpp", "p.grid.Vpoc", [0 0 100 80], lib);
+    alignPhys(sys + "/HPP transformer", xH + 120, yH);
+    blks(end+1) = nodeLabel(sys, "HPP_bus", H("HPP transformer").LConn(1), "left");
+    meterBlock(sys, "POC meter", [0 0 90 80], lib);
+    tp = get_param(H("HPP transformer").RConn(1), "Position");
+    alignPhys(sys + "/POC meter", tp(1) + 60, tp(2));
+    PL(H("HPP transformer").RConn(1), H("POC meter").LConn(1));
+    Zg = "(p.grid.Vpoc^2/(p.grid.SCR*p.grid.Pmax_poc))";
+    add_block(lib("Passive/RLC Assemblies/RLC (Three-Phase)"), sys + "/grid Zg", "component_structure", ...
+        "ee.enum.rlc.structure.SeriesRL", "R", Zg + "/sqrt(1+p.grid.XR^2)", ...
+        "L", Zg + "*p.grid.XR/sqrt(1+p.grid.XR^2)/(2*pi*" + f0 + ")", "Position", [0 0 60 40]);
+    mp = get_param(H("POC meter").RConn(1), "Position");
+    alignPhys(sys + "/grid Zg", mp(1) + 180, mp(2));
+    PL(H("POC meter").RConn(1), H("grid Zg").LConn(1));
+    add_block(lib("Sources/Controlled Voltage Source (Three-Phase)"), sys + "/grid E", "input_option", ...
+        "ee.enum.inputType.singleFreqAC", "FRated", f0, "Orientation", "left", "Position", [0 0 80 80]);
+    zp = get_param(H("grid Zg").RConn(1), "Position");
+    ep = get_param(sys + "/grid E", "Position");  er = get_param(H("grid E").RConn(1), "Position");
+    set_param(sys + "/grid E", "Position", ep + [zp(1) + 60 - ep(1), zp(2) - er(2), zp(1) + 60 - ep(1), zp(2) - er(2)]);
+    PL(H("grid Zg").RConn(1), H("grid E").RConn(1));
+    add_block(sprintf("ee_lib/Connectors &\nReferences/Electrical Reference"), sys + "/gE", "Position", [0 0 20 20]);
+    np = get_param(H("grid E").LConn(3), "Position");
+    set_param(sys + "/gE", "Position", [np(1) + 30, np(2) + 20, np(1) + 50, np(2) + 40]);
+    add_line(sys, H("grid E").LConn(3), H("gE").LConn(1), "autorouting", "on");
+    nm = ["E in", "E ph"];  un = ["V", "rad"];  tg = ["E_mag", "E_ph"];
+    for j = 1:2
+        add_block("nesl_utility/Simulink-PS Converter", sys + "/" + nm(j), "Unit", un(j), "Orientation", "left", ...
+            "Position", [0 0 20 20]);
+        pp = get_param(H("grid E").LConn(j), "Position");
+        set_param(sys + "/" + nm(j), "Position", [pp(1) + 40, pp(2) - 10, pp(1) + 60, pp(2) + 10]);
+        add_line(sys, H(nm(j)).RConn(1), H("grid E").LConn(j));
+        f = addFrom(sys, tg(j), tagColor(cm, tg(j)));
+        cp = get_param(sys + "/" + nm(j), "Position");  fpp = get_param(sys + "/" + f, "Position");
+        set_param(sys + "/" + f, "Position", round([cp(3) + 30, (cp(2)+cp(4))/2 - 11, cp(3) + 30 + fpp(3) - fpp(1), (cp(2)+cp(4))/2 + 11]));
+        add_line(sys, f + "/1", nm(j) + "/1");
+        blks = [blks, nm(j), f]; %#ok<AGROW>
+    end
+    pq = ["P_poc", "Q_poc"];
+    for j = 1:2
+        g = addGoto(sys, pq(j), tagColor(cm, pq(j)));
+        gp = get_param(sys + "/" + g, "Position");  mpos = get_param(sys + "/POC meter", "Position");
+        yo = portY(sys + "/POC meter", "out", j);
+        set_param(sys + "/" + g, "Position", [mpos(3) + 30, yo - 11, mpos(3) + 30 + gp(3) - gp(1), yo + 11]);
+        add_line(sys, "POC meter/" + j, g + "/1");
+        blks(end+1) = g; %#ok<AGROW>
+    end
+    blks = [blks, tapLabel(sys, "POC", H("POC meter").RConn(1)), "HPP transformer", "POC meter", "grid Zg", "grid E", "gE"];
+    hGrid = areaAround(sys, "HPP transformer 33-132 kV, POC meter and grid (E behind Zg)", blks, areaColor("interface"));
+
+    % (3) HPP bus and POC voltages, solver configuration
+    gpos = get_param(hGrid, "Position");  yV = gpos(4) + 70;  blks = strings(0);
+    vn = ["HPP bus voltage", "POC voltage"];  vb = ["p.net.Vhpp", "p.grid.Vpoc"];
+    lab = ["HPP_bus", "POC"];  vt = ["V_bus", "V_poc"];
+    for j = 1:2
+        y0 = yV + 80*(j-1);
+        vMeterBlock(sys, vn(j), vb(j), [xH + 160, y0, xH + 250, y0 + 40], lib);
+        blks(end+1) = nodeLabel(sys, lab(j), H(vn(j)).LConn(1), "left"); %#ok<AGROW>
+        g = addGoto(sys, vt(j), tagColor(cm, vt(j)));  gp = get_param(sys + "/" + g, "Position");
+        yo = portY(sys + "/" + vn(j), "out", 1);
+        set_param(sys + "/" + g, "Position", [xH + 290, yo - 11, xH + 290 + gp(3) - gp(1), yo + 11]);
+        add_line(sys, vn(j) + "/1", g + "/1");
+        blks = [blks, vn(j), g]; %#ok<AGROW>
+    end
+    add_block("nesl_utility/Solver Configuration", sys + "/solver", "EquationFormulation", "NE_FREQUENCY_TIME_EF", ...
+        "UseLocalSolver", "on", "LocalSolverChoice", "NE_BACKWARD_EULER_ADVANCER", "LocalSolverSampleTime", "p.sim.Ts", ...
+        "DoFixedCost", "on", "MaxNonlinIter", "1", "Position", [xH + 160, yV + 170, xH + 220, yV + 200]);
+    blks = [blks, "solver", nodeLabel(sys, "HPP_bus", H("solver").RConn(1), "right")];
+    hV = areaAround(sys, "Bus and POC voltages, solver configuration", blks, areaColor("interface"));
+    ep = get_param(sys + "/grid E", "Position");
+
+    % ================= outputs =================
+    gpos = get_param(hGrid, "Position");  xo = gpos(3) + 300;
+    add_block("simulink/Signal Routing/Mux", sys + "/V_re all", "Inputs", num2str(nA), "Position", [0 0 6 30*nA]);
+    add_block("simulink/Signal Routing/Mux", sys + "/V_im all", "Inputs", num2str(nA), "Position", [0 0 6 30*nA]);
+    add_block("simulink/Discrete/Memory", sys + "/V_re prev", "InitialCondition", "ones(" + nA + ",1)", "Position", [0 0 30 30]);
+    add_block("simulink/Discrete/Memory", sys + "/V_im prev", "InitialCondition", "zeros(" + nA + ",1)", "Position", [0 0 30 30]);
+    add_block("simulink/Signal Routing/Mux", sys + "/P_plant all", "Inputs", "3", "Position", [0 0 6 90]);
+    add_block("simulink/Signal Routing/Mux", sys + "/Q_plant all", "Inputs", "3", "Position", [0 0 6 90]);
+    add_block("simulink/Sources/Step", sys + "/f grid", "Time", "p.grid.fev.t0", "Before", "1", ...
+        "After", "1 + p.grid.fev.df", "SampleTime", "0", "Position", [0 0 30 30]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/network bus", "Inputs", "6", "Position", [0 0 6 300]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/POC bus", "Inputs", "3", "Position", [0 0 6 150]);
+    add_block("simulink/Sinks/Out1", sys + "/network", "Port", "1", "Position", [0 0 30 14]);
+    add_block("simulink/Sinks/Out1", sys + "/POC meas", "Port", "2", "Position", [0 0 30 14]);
+    sre = [num2cell((2:nA)'), num2cell("@Vre_" + (2:nA)')];
+    sim_ = [num2cell((2:nA)'), num2cell("@Vim_" + (2:nA)')];
+    rows = {
+        [stg("@Vre_1", 0), stg("V_re all", 1, sre), stg("V_re prev"), stg(">V_re_prev")]
+        [stg("@Vim_1", 0), stg("V_im all", 1, sim_), stg("V_im prev"), stg(">V_im_prev")]
+        [stg("@P_wpp", 0), stg("P_plant all", 1, {2, "@P_spp"; 3, "@P_bess"}), stg(">P_plant")]
+        [stg("@Q_wpp", 0), stg("Q_plant all", 1, {2, "@Q_spp"; 3, "@Q_bess"}), stg(">Q_plant")]
+        [stg("@V_re_prev", 0), stg("network bus", 1, {2, "@V_im_prev"; 3, "@P_plant"; 4, "@Q_plant"; 5, "@V_bus"; 6, "f grid"}), stg("network")]
+        [stg("@P_poc", 0), stg("POC bus", 1, {2, "@Q_poc"; 3, "@V_poc"}), stg("POC meas")]};
+    [~, hOut] = ctrlSection(sys, "Output buses (V one step old, powers in W and var)", rows, xo, 20, cm, areaColor("interface"));
+    nameInputs(sys + "/network bus", ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "f"]);
+    nameInputs(sys + "/POC bus", ["P_poc", "Q_poc", "V_poc"]);
+    alignColumns(hIn, {hMid, [hDip, hGrid, hV]}, hOut);
+    set_param(sys, "Description", "Network as a Simscape Electrical model in frequency-and-time mode " + ...
+        "(buildNetworkSimscape). Same ports as the nodal network. Electrical nodes are joined by " + ...
+        "Connection Labels (collector, tap, HPP bus, POC); signals by local Goto/From.");
+    hideStructuralNames(sys);
+end
+
+function alignPhys(blk, x, yPort)
+    % move a block so its left edge is at x and its first left physical
+    % port (LConn 1) is at height yPort
+    pos = get_param(blk, "Position");  w = pos(3) - pos(1);  h = pos(4) - pos(2);
+    set_param(blk, "Position", [x, pos(2), x + w, pos(4)]);
+    ph = get_param(blk, "PortHandles");  pp = get_param(ph.LConn(1), "Position");
+    d = round(yPort - pp(2));
+    set_param(blk, "Position", [x, pos(2) + d, x + w, pos(2) + d + h]);
+end
+
+function name = nodeLabel(sys, label, port, side)
+    % Connection Label at a physical port: "right" puts it right of the port
+    % (port on its left), "left" puts it left of the port (flipped)
+    i = 1;
+    while getSimulinkBlockHandle(sys + "/" + label + " label " + i) ~= -1, i = i + 1; end
+    name = label + " label " + i;
+    if side == "left", o = "left"; else, o = "right"; end
+    add_block("nesl_utility/Connection Label", sys + "/" + name, "Label", label, "Orientation", o, "Position", [0 0 20 20]);
+    pp = get_param(port, "Position");
+    if side == "left"
+        set_param(sys + "/" + name, "Position", [pp(1) - 60, pp(2) - 10, pp(1) - 40, pp(2) + 10]);
+    else
+        set_param(sys + "/" + name, "Position", [pp(1) + 40, pp(2) - 10, pp(1) + 60, pp(2) + 10]);
+    end
+    ph = get_param(sys + "/" + name, "PortHandles");
+    add_line(sys, port, ph.LConn(1), "autorouting", "on");
+end
+
+function name = tapLabel(sys, label, port)
+    % Connection Label below a physical port (a branch of that node)
+    i = 1;
+    while getSimulinkBlockHandle(sys + "/" + label + " label " + i) ~= -1, i = i + 1; end
+    name = label + " label " + i;
+    pp = get_param(port, "Position");
+    add_block("nesl_utility/Connection Label", sys + "/" + name, "Label", label, "Orientation", "down", ...
+        "Position", [pp(1) - 10, pp(2) + 40, pp(1) + 10, pp(2) + 60]);
+    ph = get_param(sys + "/" + name, "PortHandles");
+    add_line(sys, port, ph.LConn(1), "autorouting", "on");
+end
+
+function lib = eeLibrary()
+    % lookup of ee_lib blocks by their path with spaces instead of line breaks
+    raw = find_system('ee_lib', 'LookUnderMasks', 'all', 'FollowLinks', 'on', 'BlockType', 'SimscapeBlock');
+    all = string(strrep(raw, newline, ' '));
+    lib = @(n) raw{all == "ee_lib/" + n};
+end
+
+function trBlock(sys, name, d, V1, V2, pos, lib)
+    % two-winding Yg/Yg transformer: d = parameter struct path with S, uk, XR;
+    % leakage and winding resistance split equally; magnetizing branch
+    % from d.Rm, d.Xm (needed in frequency-and-time mode; same branch in the nodal model)
+    r = "(" + d + ".uk/sqrt(1+" + d + ".XR^2))";
+    add_block(lib("Passive/Transformers/Two-Winding Transformer (Three-Phase)"), sys + "/" + name, ...
+        "SRated", d + ".S", "FRated", "p.grid.f0", "VRated1", V1, "VRated2", V2, ...
+        "Winding1Connection", "ee.enum.windingconnection.Yg", "Winding2Connection", "ee.enum.windingconnection.Yg", ...
+        "pu_Rw1", r + "/2", "pu_Rw2", r + "/2", "leakage_reactance_option", "ee.enum.transformer_leakage.include", ...
+        "pu_Xl1", r + "*" + d + ".XR/2", "pu_Xl2", r + "*" + d + ".XR/2", ...
+        "magnetizing_reactance_option", "ee.enum.transformer_magnetizingReactance.include", "pu_Xm", d + ".Xm", ...
+        "magnetizing_resistance_option", "ee.enum.transformer_magnetizingResistance.include", "pu_Rm", d + ".Rm", ...
+        "Position", pos);
+end
+
+function piBlock(sys, name, cab, len, f0, pos, lib)
+    % feeder segment (subsystem): pi model from basic three-phase blocks,
+    % series R-L and half the charging capacitance to ground at each end.
+    % Port a (left) = far end (tap), b (right) = towards the busbar.
+    % cab = cable parameter path (R, X [ohm/km], C [F/km], nPar); len [km].
+    % (The library's Transmission Line (Three-Phase) block produced a
+    % non-physical 100 Hz power ripple in frequency-and-time mode.)
+    b = sys + "/" + name;
+    add_block("built-in/Subsystem", b, "Position", pos);
+    add_block("nesl_utility/Connection Port", b + "/a", "Side", "Left", "Position", [20 60 50 80]);
+    add_block("nesl_utility/Connection Port", b + "/b", "Side", "Right", "Position", [330 60 360 80]);
+    add_block(lib("Passive/RLC Assemblies/RLC (Three-Phase)"), b + "/series", "component_structure", ...
+        "ee.enum.rlc.structure.SeriesRL", "R", cab + ".R*" + len + "/" + cab + ".nPar", ...
+        "L", cab + ".X*" + len + "/(2*pi*" + f0 + ")/" + cab + ".nPar", "Position", [160 50 220 90]);
+    for e = ["a", "b"]
+        x = 80 + 180*(e == "b");
+        add_block(lib("Passive/RLC Assemblies/RLC (Three-Phase)"), b + "/C" + e, "component_structure", ...
+            "ee.enum.rlc.structure.C", "C", cab + ".C*" + len + "*" + cab + ".nPar/2", "Position", [x 130 x+40 170]);
+        add_block(lib("Connectors & References/Grounded Neutral (Three-Phase)"), b + "/gnd " + e, "Position", [x 200 x+30 215]);
+    end
+    h = @(x) get_param(b + "/" + x, "PortHandles");
+    add_line(b, h("a").RConn(1), h("series").LConn(1));  add_line(b, h("b").RConn(1), h("series").RConn(1));
+    add_line(b, h("Ca").LConn(1), h("series").LConn(1));  add_line(b, h("Cb").LConn(1), h("series").RConn(1));
+    add_line(b, h("Ca").RConn(1), h("gnd a").LConn(1));  add_line(b, h("Cb").RConn(1), h("gnd b").LConn(1));
+    set_param(b, "BackgroundColor", "[0.95 0.95 0.95]");
+end
+
+function meterBlock(sys, name, pos, lib)
+    % subsystem: three-phase power sensor between ports a (left) and b
+    % (right); outputs P [W], Q [var] flowing from a to b
+    b = sys + "/" + name;
+    add_block("built-in/Subsystem", b, "Position", pos);
+    add_block(lib("Sensors & Transducers/Power Sensor (Three-Phase)"), b + "/PQ", "f0", "p.grid.f0", "Position", [200 100 260 160]);
+    add_block("nesl_utility/Connection Port", b + "/a", "Side", "Left", "Position", [100 120 130 140]);
+    add_block("nesl_utility/Connection Port", b + "/b", "Side", "Right", "Position", [330 120 360 140]);
+    for j = 1:2
+        n = ["P", "Q"];
+        add_block("nesl_utility/PS-Simulink Converter", b + "/" + n(j) + " out", "Position", [200+60*(j-1) 30 220+60*(j-1) 50]);
+        add_block("simulink/Sinks/Out1", b + "/" + n(j), "Port", num2str(j), "Position", [200+60*(j-1) -20 230+60*(j-1) -6]);
+    end
+    h = @(x) get_param(b + "/" + x, "PortHandles");
+    add_line(b, h("a").RConn(1), h("PQ").LConn(1));  add_line(b, h("b").RConn(1), h("PQ").RConn(1));
+    add_line(b, h("PQ").LConn(2), h("P out").LConn(1));  add_line(b, h("PQ").LConn(3), h("Q out").LConn(1));
+    add_line(b, "P out/1", "P/1");  add_line(b, "Q out/1", "Q/1");
+    set_param(b, "BackgroundColor", "[0.95 0.95 0.95]");
+end
+
+function vMeterBlock(sys, name, Vn, pos, lib)
+    % subsystem: phase voltages at the port -> rms line voltage [pu of Vn]
+    b = sys + "/" + name;
+    add_block("built-in/Subsystem", b, "Position", pos);
+    add_block("nesl_utility/Connection Port", b + "/a", "Side", "Left", "Position", [20 60 50 80]);
+    add_block(lib("Sensors & Transducers/Phase Voltage Sensor (Three-Phase)"), b + "/Vs", "Position", [100 50 140 90]);
+    add_block(lib("Connectors & References/Grounded Neutral (Three-Phase)"), b + "/gn", "Position", [100 130 130 145]);
+    add_block("nesl_utility/PS-Simulink Converter", b + "/v", "Position", [180 60 200 80]);
+    add_block("simulink/Sources/Digital Clock", b + "/clock", "SampleTime", "p.sim.Ts", "Position", [180 110 200 130]);
+    addPhasor(b, [240 50 340 130], Vn);
+    add_block("simulink/Math Operations/Math Function", b + "/abs", "Operator", "hypot", "Position", [380 60 420 100]);
+    add_block("simulink/Sinks/Out1", b + "/V", "Port", "1", "Position", [460 75 490 89]);
+    h = @(x) get_param(b + "/" + x, "PortHandles");
+    add_line(b, h("a").RConn(1), h("Vs").LConn(1));  add_line(b, h("Vs").RConn(2), h("gn").LConn(1));
+    add_line(b, h("Vs").RConn(1), h("v").LConn(1));
+    add_line(b, "v/1", "phasor/1");  add_line(b, "clock/1", "phasor/2");
+    add_line(b, "phasor/1", "abs/1");  add_line(b, "phasor/2", "abs/2");  add_line(b, "abs/1", "V/1");
+    set_param(b, "BackgroundColor", "[0.95 0.95 0.95]");
+end
+
+function convBlock(sys, name, Ib, Vn, pos, lib)
+    % converter interface (subsystem): in 1 I_re, 2 I_im [system pu, network
+    % angle reference], 3 time; out 1 V_re, 2 V_im [pu] at the terminal;
+    % physical port ~ (right). Controlled three-phase current source
+    % (magnitude rms, phase) and a phase voltage sensor.
+    b = sys + "/" + name;
+    add_block("built-in/Subsystem", b, "Position", pos);
+    add_block("simulink/Sources/In1", b + "/I_re", "Port", "1", "Position", [20 40 50 54]);
+    add_block("simulink/Sources/In1", b + "/I_im", "Port", "2", "Position", [20 80 50 94]);
+    add_block("simulink/Sources/In1", b + "/t", "Port", "3", "Position", [20 200 50 214]);
+    body = [
+        "% current phasor (system pu, network angle) -> rms magnitude [A] and phase [rad]"
+        "I = complex(I_re, I_im);"
+        "Imag = abs(I) * Ib;"
+        "Iph = angle(I);"];
+    addMatlabFunction(b + "/current", "current", ["I_re", "I_im", "Ib"], ["Imag", "Iph"], body, "", [120 30 220 110]);
+    add_block("simulink/Sources/Constant", b + "/Ib", "Value", Ib, "Position", [40 120 100 140]);
+    add_block("nesl_utility/Simulink-PS Converter", b + "/I in", "Unit", "A", "Position", [260 40 280 60]);
+    add_block("nesl_utility/Simulink-PS Converter", b + "/ph in", "Unit", "rad", "Position", [260 80 280 100]);
+    add_block(lib("Sources/Controlled Current Source (Three-Phase)"), b + "/source", "input_option", ...
+        "ee.enum.inputType.singleFreqAC", "FRated", "p.grid.f0", "Position", [320 30 400 110]);
+    add_block(sprintf("ee_lib/Connectors &\nReferences/Electrical Reference"), b + "/gnd", "Position", [330 140 350 160]);
+    add_block("nesl_utility/Connection Port", b + "/~", "Side", "Right", "Position", [500 60 530 80]);
+    add_block(lib("Sensors & Transducers/Phase Voltage Sensor (Three-Phase)"), b + "/Vs", "Position", [440 150 480 190]);
+    add_block(lib("Connectors & References/Grounded Neutral (Three-Phase)"), b + "/gn", "Position", [440 220 470 235]);
+    add_block("nesl_utility/PS-Simulink Converter", b + "/v", "Position", [380 160 400 180]);
+    addPhasor(b, [240 150 340 230], Vn);
+    add_block("simulink/Sinks/Out1", b + "/V_re", "Port", "1", "Position", [560 160 590 174]);
+    add_block("simulink/Sinks/Out1", b + "/V_im", "Port", "2", "Position", [560 200 590 214]);
+    h = @(x) get_param(b + "/" + x, "PortHandles");
+    add_line(b, "I_re/1", "current/1");  add_line(b, "I_im/1", "current/2");  add_line(b, "Ib/1", "current/3");
+    add_line(b, "current/1", "I in/1");  add_line(b, "current/2", "ph in/1");
+    add_line(b, h("I in").RConn(1), h("source").LConn(1));  add_line(b, h("ph in").RConn(1), h("source").LConn(2));
+    add_line(b, h("source").LConn(3), h("gnd").LConn(1));
+    add_line(b, h("source").RConn(1), h("~").RConn(1));
+    add_line(b, h("Vs").LConn(1), h("source").RConn(1));  add_line(b, h("Vs").RConn(2), h("gn").LConn(1));
+    add_line(b, h("Vs").RConn(1), h("v").LConn(1));
+    add_line(b, "v/1", "phasor/1");  add_line(b, "t/1", "phasor/2");
+    add_line(b, "phasor/1", "V_re/1");  add_line(b, "phasor/2", "V_im/1");
+    set_param(b, "BackgroundColor", "[0.878 0.965 0.925]");
+end
+
+function body = phasorBody()
+    % space phasor of the phase voltages at the fixed nominal frequency w0,
+    % rotated by +90 deg so the grid source is at angle 0 (sine reference
+    % of the library), scaled to pu of the nominal line voltage Vn
+    body = [
+        "% space phasor at the nominal frequency: exact phasor in frequency-and-time mode"
+        "a = complex(-0.5, sqrt(3)/2);"
+        "s = 2/3*(v(1) + a*v(2) + a^2*v(3)) * exp(complex(0, pi/2 - w0*t));"
+        "V = s * sqrt(3/2) / Vn;"
+        "V_re = real(V);"
+        "V_im = imag(V);"];
+end
+
+function addPhasor(b, pos, Vn)
+    % MATLAB Function "phasor" (inputs v, t, Vn, w0) with constants for Vn and w0
+    addMatlabFunction(b + "/phasor", "phasor", ["v", "t", "Vn", "w0"], ["V_re", "V_im"], phasorBody(), "", pos);
+    add_block("simulink/Sources/Constant", b + "/Vn", "Value", Vn, "Position", [pos(1)-90 pos(4)+10 pos(1)-30 pos(4)+30]);
+    add_block("simulink/Sources/Constant", b + "/w0", "Value", "2*pi*p.grid.f0", "Position", [pos(1)-90 pos(4)+40 pos(1)-30 pos(4)+60]);
+    add_line(b, "Vn/1", "phasor/3");  add_line(b, "w0/1", "phasor/4");
 end

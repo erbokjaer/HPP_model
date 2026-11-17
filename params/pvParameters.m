@@ -1,10 +1,18 @@
 function pv = pvParameters()
 %PVPARAMETERS  PV power plant parameters (placeholder values).
-%   N asset instances (inverter groups / feeders) share the plant rating
-%   equally. Changing N requires rebuilding the model with buildHPP.
 
-    pv.N      = 2;       % [-]  asset instances in the model
-    pv.Prated = 50e6;    % [W]  plant rating (all instances together)
+    % Electrical layout: nFeeders feeders with nPerFeeder units each; every
+    % unit is one asset instance (own converter model and controller) at its
+    % own network node, so N = nFeeders * nPerFeeder (derived). One unit can
+    % stand for nAgg identical real units at the same place (its transformer
+    % is scaled with nAgg). Changing N requires rebuilding the model with
+    % buildHPP; the collector data are in networkParameters.
+    % Test layout: 2 feeders with 1 unit of 5 inverter stations each = 50 MW.
+    pv.Pn         = 5e6;    % [W]  rated power per inverter station
+    pv.nAgg       = 5;      % [-]  stations represented by one unit
+    pv.nFeeders   = 2;      % [-]  feeders in the model
+    pv.nPerFeeder = 1;      % [-]  units along each feeder
+    % pv.N and pv.Prated are derived in deriveParameters
     pv.Pavail = 0.4;     % [pu] available power (constant placeholder)
 
     % ---- WECC second-generation generic model (stage 4) ----

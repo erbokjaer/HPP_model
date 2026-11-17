@@ -5,6 +5,9 @@ function out = runSweep(setName, opts)
 %   out = runSweep("grid_Pref_Pbess")             all cases of a set, serial
 %   out = runSweep("grid_Pref_Pbess", UseParallel=true)   parsim, local pool
 %   out = runSweep(..., Save=false)               don't write a results file
+%   out = runSweep(..., Network="nodal")          network model: "nodal" (fast)
+%                                                 or "simscape"; default
+%                                                 p.net.solverType
 %
 %   out(k) is the output of case k. Results go to results/<setName>/sweep.mat
 %   with out, cases and setName. listCaseSets() shows the available sets.
@@ -20,10 +23,12 @@ function out = runSweep(setName, opts)
         setName (1,1) string = "nominal"
         opts.UseParallel (1,1) logical = false
         opts.Save (1,1) logical = true
+        opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape"])} = ""
     end
 
     cases = defineCases(setName);
     pBase = HPP_parameters();
+    if opts.Network ~= "", pBase.net.solverType = opts.Network; end
     checkModelBuild(pBase);
 
     in(height(cases)) = Simulink.SimulationInput("HPP");
@@ -31,6 +36,7 @@ function out = runSweep(setName, opts)
         p = applyCase(pBase, cases(k, :));
         in(k) = Simulink.SimulationInput("HPP");
         in(k) = in(k).setVariable("p", p);
+        in(k) = in(k).setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
         in(k) = in(k).setModelParameter("StopTime", num2str(p.sim.Tstop));
     end
 

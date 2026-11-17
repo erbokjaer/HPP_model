@@ -3,13 +3,17 @@ function p = deriveParameters(p)
 %
 %   Called at the end of HPP_parameters and by applyCase after case values
 %   are applied, so derived values always follow the component values:
-%     p.wt.Prated          plant rating from N, nAgg and Pn
+%     p.<type>.N, .Prated  asset instances (nFeeders * nPerFeeder) and plant
+%                          rating (N * nAgg * Pn) for wt, pv, bess
 %     p.ctrl               all controller parameters (controllerParameters)
 %     p.wt.ap, p.pv.ap, p.bess.ap   per-instance arguments of the asset
 %                          models (N-by-1 struct arrays); HPP.slx passes
 %                          p.<type>.ap(k) to asset instance k
 
-    p.wt.Prated = p.wt.N * p.wt.nAgg * p.wt.Pn;
+    for t = ["wt", "pv", "bess"]
+        p.(t).N      = p.(t).nFeeders * p.(t).nPerFeeder;
+        p.(t).Prated = p.(t).N * p.(t).nAgg * p.(t).Pn;
+    end
 
     p.ctrl = controllerParameters(p);
 
