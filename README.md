@@ -76,7 +76,7 @@ Everything the models use lives in the struct `p`. Blocks reference fields such 
 
 Asset counts and layout: each plant has `nFeeders` feeders with `nPerFeeder` units; every unit is its own asset instance (converter model and controller) at its own network node. A unit can stand for `nAgg` identical units, and a modelled feeder for `p.net.<type>.cable.nPar` parallel feeders. Test layout (plant sizes unchanged): wind 1 feeder × 2 units of 15 × 5 MW turbines (10 kV, `nPar` = 15), PV 2 feeders × 1 unit of 5 × 5 MW stations (33 kV), one 30 MW / 60 MWh BESS at the 33 kV HPP busbar. Changing the number of units requires `buildHPP`; collector data are in `networkParameters`.
 
-Network model (branch `grid-components`): the `Network` block holds two models with the same results, chosen per run without rebuilding: `"nodal"` (nodal solver, fast) and `"simscape"` (Simscape Electrical blocks in frequency-and-time mode, component-wise, about 2–3 times slower). Choose it with the `network` setting in `main.m`, or `runCase(set, id, Network="nodal")`, `runSweep(set, Network="simscape")`; the default is `p.net.solverType`.
+Network model (branch `grid-components`): the `Network` block holds two models with the same results, chosen per run without rebuilding: `"nodal"` (nodal solver, fast) and `"simscape"` (Simscape Electrical blocks in frequency-and-time mode, component-wise, about 2–3 times slower). Choose it with the `network` setting in `main.m`, or `runCase(set, id, Network="nodal")`, `runSweep(set, Network="simscape")`; the default is `p.net.solverType`, set to `"nodal"`.
 
 Controller parameters (`p.ctrl`, from `controllerParameters`):
 

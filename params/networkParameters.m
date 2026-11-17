@@ -17,12 +17,14 @@ function net = networkParameters()
 
     net.Vhpp = 33e3;          % [V]  HPP collector busbar (POC voltage: p.grid.Vpoc)
 
-    % Network implementation (branch grid-components):
+    % Network model used when a run does not choose one (default). Both are
+    % in HPP.slx as variants of the Network block; the choice is made per
+    % run (runCase/runSweep option Network, main.m setting network), no
+    % rebuild needed:
     %   "simscape": Simscape Electrical blocks in frequency-and-time mode
     %               (buildNetworkSimscape), unit transformers as series R-L
     %   "nodal":    the nodal solver Z = inv(Y) (networkSolverData, buildNetwork)
-    % Changing it requires rebuilding HPP.slx with buildHPP.
-    net.solverType = "simscape";
+    net.solverType = "nodal";
 
     % ---- wind: 0.69/10 kV turbines on 10 kV feeders, 10/33 kV wind transformer ----
     net.wt.Vcol  = 10e3;                                            % [V] collector voltage
