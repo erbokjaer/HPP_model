@@ -10,10 +10,11 @@ function out = runSweep(setName, opts)
 %                                                 p.net.solverType
 %   out = runSweep(..., FastRestart=true)         compile once, reuse for all
 %                                                 cases (saves the compile time
-%                                                 per case). Only for case sets
-%                                                 that change tunable values;
-%                                                 not for grid strength (SCR,
-%                                                 X/R), layout or network.
+%                                                 per case). Every parameter is
+%                                                 tunable except the layout
+%                                                 (units per plant), the time
+%                                                 step, the communication
+%                                                 delays and the network model.
 %
 %   out(k) is the output of case k. Results go to results/<setName>/sweep.mat
 %   with out, cases and setName. listCaseSets() shows the available sets.
@@ -84,10 +85,9 @@ end
 
 function checkTunable(cases, setName)
     % Fast Restart keeps the compiled model: values that are fixed at
-    % compile time (network data, layout, communication delays, time step)
+    % compile time (layout, time step, communication delays, network model)
     % would silently keep their first value. Refuse case sets that change them.
-    fixed = ["net.", "grid.SCR", "grid.XR", "grid.Pmax_poc", "grid.Pbase", "grid.Vpoc", "comm.", "sim.", ...
-             ".nFeeders", ".nPerFeeder", ".nAgg", ".Pn", ".N"];
+    fixed = ["net.solverType", "sim.Ts", "comm.", ".nFeeders", ".nPerFeeder", ".N"];
     cols = string(cases.Properties.VariableNames);
     bad = cols(arrayfun(@(c) any(startsWith(c, fixed) | endsWith(c, fixed)), cols));
     if ~isempty(bad)

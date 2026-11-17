@@ -14,12 +14,13 @@ function out = runCase(setName, caseId, opts)
 %   runCase(..., FastRestart=true)            keep the model compiled between
 %                                             runs in this MATLAB session: a
 %                                             rerun skips the compile (about
-%                                             20-25 s). Recompiles by itself
-%                                             when a value that is fixed at
-%                                             compile time differs from the
-%                                             previous run (network data, grid
-%                                             strength, layout, delays, time
-%                                             step, network model).
+%                                             20-25 s). Parameter values are
+%                                             tunable (controllers, grid and
+%                                             network data, events); it
+%                                             recompiles by itself only when
+%                                             the layout, time step,
+%                                             communication delays or network
+%                                             model differ from the previous run.
 %
 %   Results go to results/<setName>/case_NNN.mat with out, p and caseInfo.
 %   listCaseSets() shows the available case sets.
@@ -138,10 +139,9 @@ function m = modeName(mode)
 end
 
 function sig = compileSignature(p)
-    % values that are fixed when HPP.slx is compiled (non-tunable): a Fast
-    % Restart run must recompile when any of them changes
-    g = p.grid;
-    sig = struct("net", p.net, "comm", p.comm, "sim", p.sim, ...
-        "N", [p.wt.N, p.pv.N, p.bess.N], ...
-        "grid", [g.SCR, g.XR, g.Pmax_poc, g.Pbase, g.Vpoc, g.E, g.f0]);
+    % what is fixed when HPP.slx is compiled: the layout (number of units),
+    % the time step, the communication delays and the network model. All
+    % other values are tunable (network data, controllers, grid events).
+    sig = struct("N", [p.wt.N, p.pv.N, p.bess.N], "Ts", p.sim.Ts, ...
+        "comm", p.comm, "network", p.net.solverType);
 end

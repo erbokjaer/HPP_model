@@ -363,10 +363,11 @@ function buildNetwork(sys)
     % ---- network solution ----
     outs = ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "P_poc", "Q_poc", "V_poc"];
     body = [
-        "Z  = complex(net.Zre, net.Zim);"
+        "% numeric network data come in as (tunable) inputs; net holds the structure"
+        "Z  = complex(Zre, Zim);"
         "nA = numel(I_re);"
         "n  = size(Z, 1);"
-        "Zg = complex(net.Zg_re, net.Zg_im);"
+        "Zg = complex(Zg_ri(1), Zg_ri(2));"
         "I = complex(zeros(n, 1), zeros(n, 1));"
         "I(1:nA) = complex(I_re(:), I_im(:));"
         "I(net.poc) = I(net.poc) + E / Zg;         % grid Norton source at the POC (E: grid voltage, incl. dips)"
@@ -376,7 +377,7 @@ function buildNetwork(sys)
         "% power each plant delivers into the HPP busbar (its measurement point):"
         "% flows of its plant branches at the busbar end, incl. bus-end charging"
         "Vb = V(net.bus);"
-        "Ibr = (V(net.brFrom) - Vb) ./ complex(net.brZre, net.brZim) - 1i * net.brB .* Vb;"
+        "Ibr = (V(net.brFrom) - Vb) ./ complex(brZre, brZim) - 1i * brB .* Vb;"
         "Sbr = Vb .* conj(Ibr);"
         "P_plant = zeros(3, 1);  Q_plant = zeros(3, 1);"
         "for j = 1:numel(Sbr)"
@@ -387,10 +388,21 @@ function buildNetwork(sys)
         "Vp = V(net.poc);"
         "Spoc = Vp * conj((Vp - E) / Zg);          % power into the grid"
         "P_poc = real(Spoc);  Q_poc = imag(Spoc);  V_poc = abs(Vp);"];
-    addMatlabFunction(sys + "/solve", "solve", ["I_re", "I_im", "E"], outs, body, "net", [0 0 160 300]);
+    ins = ["I_re", "I_im", "E", "Zre", "Zim", "Zg_ri", "brZre", "brZim", "brB"];
+    addMatlabFunction(sys + "/solve", "solve", ins, outs, body, "net", [0 0 160 330]);
+    % the structure (node indices) stays fixed at compile time; the numbers
+    % (impedances, charging, grid) are tunable constants, so grid strength,
+    % cable and transformer data change without recompiling
+    d = sfroot().find("-isa", "Stateflow.EMChart", "Path", char(sys + "/solve")).find("-isa", "Stateflow.Data", "Name", "net");
+    d.Tunable = false;
+    vals = ["net.Zre", "net.Zim", "[net.Zg_re, net.Zg_im]", "net.brZre", "net.brZim", "net.brB"];
+    for j = 1:6
+        kc(sys, ins(3 + j), vals(j));
+    end
     outTags = ["V_re", "V_im", "P_plant_pu", "Q_plant_pu", "V_bus", "P_poc_pu", "Q_poc_pu", "V_poc"];
     outsS = [num2cell((2:8)'), num2cell(outTags(2:8)')];
-    rowsS = {[stg("@I_re", 0), stg("solve", 1, {2, "@I_im"; 3, "@E"}, outsS), stg(">" + outTags(1))]};
+    sidesS = [{2, "@I_im"; 3, "@E"}; num2cell((4:9)'), num2cell(ins(4:9)')];
+    rowsS = {[stg("@I_re", 0), stg("solve", 1, sidesS, outsS), stg(">" + outTags(1))]};
     [~, hS, rS] = ctrlSection(sys, "Network solution, V = Z (I_inj + I_grid)", rowsS, rIn + 90, 20, cm, areaColor("asset"));
 
     % ---- output buses: terminal voltages one step old (generator "PLL";
@@ -423,7 +435,7 @@ function buildNetwork(sys)
 
     mk = Simulink.Mask.create(sys);
     mk.addParameter("Name", "net", "Prompt", "Network solver data", "Value", "p.net.solver", ...
-        "Evaluate", "on", "Tunable", "off");
+        "Evaluate", "on", "Tunable", "on");   % tunable: the numeric network data (constants) change without recompiling
     mk.Description = "Positive-sequence phasor network (collector system, transformers, grid). " + ...
         "Solves V = Z*I each step. Data from networkSolverData(p).";
 end
@@ -1252,8 +1264,9 @@ function name = makeLink(sys, label, steps)
                 parts = split(arg, "@");
                 init = "0";
                 if numel(parts) > 1, init = parts(2); end
-                % discrete delay of whole simulation steps (was a continuous
-                % Transport Delay); runs at the simulation step p.sim.Ts
+                % discrete delay of whole simulation steps at p.sim.Ts. The
+                % length is fixed when the model is compiled (a variable-length
+                % delay made every run about 0.5 s per simulated second slower)
                 add_block("simulink/Discrete/Delay", blk + "/" + bn, ...
                     "DelayLength", "round(" + parts(1) + "/p.sim.Ts)", "InitialCondition", init, ...
                     "SampleTime", "p.sim.Ts");
@@ -2070,7 +2083,7 @@ function buildNetworkSimscape(sys, p)
                 % physical row: converter ~ -- unit Z -- feeder segment -- node label
                 cp = get_param(H("converter " + s).RConn(1), "Position");
                 add_block(lib("Passive/RLC Assemblies/RLC (Three-Phase)"), sys + "/unit Z " + s, "component_structure", ...
-                    "ee.enum.rlc.structure.SeriesRL", "R", Zu + "/sqrt(1+" + pn + ".unit.XR^2)", ...
+                    "ee.enum.rlc.structure.SeriesRL", "R_conf", "runtime", "L_conf", "runtime", "R", Zu + "/sqrt(1+" + pn + ".unit.XR^2)", ...
                     "L", Zu + "*" + pn + ".unit.XR/sqrt(1+" + pn + ".unit.XR^2)/(2*pi*" + f0 + ")", "Position", [0 0 60 40]);
                 alignPhys(sys + "/unit Z " + s, cp(1) + 170, cp(2));
                 if i == 1, len = cab + ".len1"; else, len = cab + ".len"; end
@@ -2161,7 +2174,7 @@ function buildNetworkSimscape(sys, p)
     PL(H("HPP transformer").RConn(1), H("POC meter").LConn(1));
     Zg = "(p.grid.Vpoc^2/(p.grid.SCR*p.grid.Pmax_poc))";
     add_block(lib("Passive/RLC Assemblies/RLC (Three-Phase)"), sys + "/grid Zg", "component_structure", ...
-        "ee.enum.rlc.structure.SeriesRL", "R", Zg + "/sqrt(1+p.grid.XR^2)", ...
+        "ee.enum.rlc.structure.SeriesRL", "R_conf", "runtime", "L_conf", "runtime", "R", Zg + "/sqrt(1+p.grid.XR^2)", ...
         "L", Zg + "*p.grid.XR/sqrt(1+p.grid.XR^2)/(2*pi*" + f0 + ")", "Position", [0 0 60 40]);
     mp = get_param(H("POC meter").RConn(1), "Position");
     alignPhys(sys + "/grid Zg", mp(1) + 180, mp(2));
@@ -2315,6 +2328,10 @@ function trBlock(sys, name, d, V1, V2, pos, lib)
         "magnetizing_reactance_option", "ee.enum.transformer_magnetizingReactance.include", "pu_Xm", d + ".Xm", ...
         "magnetizing_resistance_option", "ee.enum.transformer_magnetizingResistance.include", "pu_Rm", d + ".Rm", ...
         "Position", pos);
+    % run-time parameters: transformer data change without recompiling
+    for c = ["SRated", "VRated1", "VRated2", "pu_Rw1", "pu_Rw2", "pu_Xl1", "pu_Xl2", "pu_Rm", "pu_Xm"]
+        set_param(sys + "/" + name, c + "_conf", "runtime");
+    end
 end
 
 function piBlock(sys, name, cab, len, f0, pos, lib)
@@ -2329,12 +2346,12 @@ function piBlock(sys, name, cab, len, f0, pos, lib)
     add_block("nesl_utility/Connection Port", b + "/a", "Side", "Left", "Position", [20 60 50 80]);
     add_block("nesl_utility/Connection Port", b + "/b", "Side", "Right", "Position", [330 60 360 80]);
     add_block(lib("Passive/RLC Assemblies/RLC (Three-Phase)"), b + "/series", "component_structure", ...
-        "ee.enum.rlc.structure.SeriesRL", "R", cab + ".R*" + len + "/" + cab + ".nPar", ...
+        "ee.enum.rlc.structure.SeriesRL", "R_conf", "runtime", "L_conf", "runtime", "R", cab + ".R*" + len + "/" + cab + ".nPar", ...
         "L", cab + ".X*" + len + "/(2*pi*" + f0 + ")/" + cab + ".nPar", "Position", [160 50 220 90]);
     for e = ["a", "b"]
         x = 80 + 180*(e == "b");
         add_block(lib("Passive/RLC Assemblies/RLC (Three-Phase)"), b + "/C" + e, "component_structure", ...
-            "ee.enum.rlc.structure.C", "C", cab + ".C*" + len + "*" + cab + ".nPar/2", "Position", [x 130 x+40 170]);
+            "ee.enum.rlc.structure.C", "C_conf", "runtime", "C", cab + ".C*" + len + "*" + cab + ".nPar/2", "Position", [x 130 x+40 170]);
         add_block(lib("Connectors & References/Grounded Neutral (Three-Phase)"), b + "/gnd " + e, "Position", [x 200 x+30 215]);
     end
     h = @(x) get_param(b + "/" + x, "PortHandles");
