@@ -6,4 +6,5 @@ function sim = simulationParameters()
 
     sim.Ts    = 1e-3;   % [s]  base (plant) fixed step size
     sim.Tstop = 60;     % [s]  simulation stop time
+    sim.logDecimation = 10;   % [-] log every 10th step (10 ms) to save memory and time
 end

@@ -7,13 +7,13 @@ function wt = windTurbineParameters()
     % stand for nAgg identical real units at the same place (its transformer
     % is scaled with nAgg). Changing N requires rebuilding the model with
     % buildHPP; the collector data are in networkParameters.
-    % Test layout: 1 feeder with 2 units of 15 turbines each = 150 MW; it
-    % stands for 15 identical feeders of 2 turbines (net.wt.cable.nPar = 15).
+    % Layout (branch layout-1wt-1pv): 1 feeder with 1 unit of 30 turbines =
+    % 150 MW; the feeder stands for 15 identical feeders (net.wt.cable.nPar).
     % Full layout, e.g.: nFeeders = 15, nPerFeeder = 2, nAgg = 1, nPar = 1.
     wt.Pn         = 5e6;    % [W]  rated power per turbine
-    wt.nAgg       = 15;     % [-]  turbines represented by one unit
+    wt.nAgg       = 30;     % [-]  turbines represented by one unit
     wt.nFeeders   = 1;      % [-]  feeders in the model
-    wt.nPerFeeder = 2;      % [-]  units along each feeder
+    wt.nPerFeeder = 1;      % [-]  units along each feeder
     % wt.N and wt.Prated (= N*nAgg*Pn) are derived in deriveParameters
 
     % Placeholder available-power profile (same for all instances)

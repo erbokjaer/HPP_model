@@ -38,7 +38,7 @@ function net = networkParameters()
     net.pv.Vcol  = 33e3;
     net.pv.unit  = struct("S", 5.5e6, "uk", 0.06, "XR", 7);         % per station
     net.pv.cable = struct("R", 0.10, "X", 0.12, "C", 0.25e-6, ...   % 33 kV, 240 mm2 Al
-        "len1", 2.0, "len", 0.5, "nPar", 1);
+        "len1", 2.0, "len", 0.5, "nPar", 2);                         % one modelled feeder = 2 parallel feeders
     net.pv.plant = struct("S", 0, "uk", 0, "XR", 1, "Rm", 1, "Xm", 1);  % none: feeders end on the HPP busbar
 
     % ---- BESS: one 0.69/33 kV unit with a short cable to the HPP busbar ----
