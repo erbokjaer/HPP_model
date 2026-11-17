@@ -13,7 +13,7 @@ listCaseSets()                 % show the available case sets
 runSweep("grid_Pref_Pbess")    % run every case of a set
 ```
 
-Or open `main.m`, pick a case set and cases in its settings block, and press Run: it runs (or reloads) the selected cases, plots them and prints a summary table.
+Or open `main.m`, pick a case set, cases, the network model (`network`) and Fast Restart (`fastRestart`) in its settings block, and press Run: it runs (or reloads) the selected cases, plots them and prints a summary table.
 
 Always open the project first. It puts `params/`, `models/`, `scripts/` and `utilities/` on the path and sends Simulink cache files to `work/`. No script uses `cd` or `addpath`.
 
@@ -24,10 +24,12 @@ The architecture, interfaces, typical values and the staged plan are in [docs/de
 ```
 HPPC (0.1 s) ── WPPC / SPPC / BESSC (20 ms) ── N × WT / PV / BESS asset (1 ms)
                                                 each asset = asset controller + generator model
-assets ── 0.69/33 kV unit transformer ── 33 kV feeder cable ── 33 kV busbar ── 33/132 kV transformer ── POC ── grid (SCR 10)
+wind:  turbine ─ 0.69/10 kV ─ 10 kV feeder ─ 10 kV bus ─ 10/33 kV ─┐
+PV:    station ─ 0.6/33 kV ─ 33 kV feeders ─────────────────────────┤ 33 kV HPP busbar ─ 33/132 kV ─ POC ─ grid (SCR 10)
+BESS:  unit ─ 0.69/33 kV ─ short 33 kV cable ───────────────────────┘
 ```
 
-The network is a positive-sequence phasor (RMS) model in per unit on 180 MVA, solved as V = Z·I every step in the masked `Network` subsystem of `HPP.slx` (data from `networkSolverData`). The generator models are current sources aligned with their terminal voltage of the previous step. Measurements come from the network: P, Q, V at the POC to the HPPC; each plant's P and Q into the 33 kV busbar and the busbar voltage to its plant controller; terminal voltage to each asset. Typical values (transformers, cables, grid) are in `networkParameters` and `gridParameters`.
+The network is a positive-sequence phasor (RMS) model in per unit on 180 MVA. The `Network` block in `HPP.slx` holds two models with the same results, chosen per run (see Parameters): a nodal solver, V = Z·I every step (data from `networkSolverData`, fast, the default), and a Simscape Electrical model of the same components in frequency-and-time mode (slower, component-wise). The generator models are current sources aligned with their terminal voltage of the previous step. Measurements come from the network: P, Q, V at the POC to the HPPC; each plant's P and Q where it feeds the 33 kV busbar (wind: 33 kV side of its 10/33 kV transformer) and the busbar voltage to its plant controller; terminal voltage to each asset. Typical values (transformers, cables, grid) are in `networkParameters` and `gridParameters`.
 
 **Layout of `HPP.slx`.** The top level has six subsystems, left to right: `TSO` → `HPP controller` → `Wind plant` / `PV plant` / `BESS plant` → `Network` → `Logging`.
 - **Buses** connect the subsystems. They carry SI units (W, var; voltages in pu).
@@ -45,7 +47,7 @@ The network is a positive-sequence phasor (RMS) model in per unit on 180 MVA, so
 | `models/assets/WT_asset.slx`, `PV_asset.slx`, `BESS_asset.slx` | Asset models: one asset controller instance + converter model (IEC Type 4 generator system for wind, WECC REGC_A for PV and BESS) + battery energy for BESS |
 
 **Who owns which model:**
-- **`HPP.slx` is always generated.** `buildHPP()` rebuilds it for the asset counts `p.wt.N`, `p.pv.N` and `p.bess.N` (default 2 each). Never edit it by hand. `runCase` and `runSweep` stop with a message if it was built for a different N than the parameters.
+- **`HPP.slx` is always generated.** `buildHPP()` rebuilds it for the layout in the parameters (asset counts `p.wt.N`, `p.pv.N`, `p.bess.N`; default 2 / 2 / 1). Never edit it by hand. `runCase` and `runSweep` stop with a message if it was built for a different N than the parameters.
 - **Controller and asset models are normal, hand-maintained models.** `buildHPP(All=true)` only creates the ones that don't exist yet, from a placeholder template. `buildHPP(All=true, Force=true)` regenerates all of them and **overwrites** any manual changes. Develop them in the Simulink editor; keep their port names and port order, because `HPP.slx` connects to them by port.
 
 **Background colours show the role** on every level: light blue = controllers (future DLLs), light green = assets / plants, light grey = interfaces and network. The plant subsystems are divided into areas: bus inputs | plant controller | N assets | outputs to the HPPC and network (all outputs in one column on the right).
@@ -54,7 +56,7 @@ The network is a positive-sequence phasor (RMS) model in per unit on 180 MVA, so
 
 Every controller is the same kind of model: inports → one MATLAB Function block `logic` → outports; all `double`, per unit on its own base, fixed sample time `Ts`, tunable parameters in the model argument `par` (= `p.ctrl.<name>.par`). The model workspace holds standalone defaults for `Ts` and `par` from `HPP_parameters()`. The full signal lists are in docs/design.md, section 4.
 
-Communication delays (`p.comm`, typical 20–200 ms) are transport delays in `HPP.slx`. Every measurement path into a controller also has a one-step memory, which avoids algebraic loops.
+Communication delays (`p.comm`, typical 20–200 ms) are discrete delays of whole simulation steps in `HPP.slx`. Every measurement path into a controller also has a one-step memory, which avoids algebraic loops.
 
 ## Folder layout
 
@@ -62,11 +64,12 @@ Communication delays (`p.comm`, typical 20–200 ms) are transport delays in `HP
 |---|---|
 | `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, network, communication) and then `deriveParameters` (controller parameters, per-instance asset arguments, network Z matrix). |
 | `models/` | `HPP.slx`, plus `ctrl/` (7 controllers) and `assets/` (3 asset models). |
-| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `checkModelBuild`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. Results: `plotResults`, `summarizeResults`, `loadResults`, `caseLabels`, `dtuColors`. |
+| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `checkModelBuild`, `networkCode`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. Results: `plotResults`, `summarizeResults`, `loadResults`, `caseLabels`, `dtuColors`. |
 | `scripts/+caseSets/` | Which variations to run: one file per case set. |
 | `utilities/` | `projectStartup.m` (runs when the project opens) and `buildHPP.m` (builds the models). |
 | `docs/` | `design.md`: architecture and plan. |
 | `hpc/` | LSF job array: `submit.sh` and `job.lsf`. |
+| `experiments/` | Standalone test models, e.g. `simscapeGrid/ftGridTest.m` (Simscape frequency-and-time tests). Not used by the main model. |
 | `results/` | Simulation output, one subfolder per case set. Not version-controlled. |
 | `work/` | Simulink cache and generated code. Not version-controlled. |
 
@@ -74,9 +77,13 @@ Communication delays (`p.comm`, typical 20–200 ms) are transport delays in `HP
 
 Everything the models use lives in the struct `p`. Blocks reference fields such as `p.wt.Pn`; there are no other workspace variables. To change a default, edit the component function in `params/`. For interactive work, reload afterwards with `p = HPP_parameters();`.
 
-Asset counts and layout: each plant has `nFeeders` feeders with `nPerFeeder` units; every unit is its own asset instance (converter model and controller) at its own network node. A unit can stand for `nAgg` identical units, and a modelled feeder for `p.net.<type>.cable.nPar` parallel feeders. Test layout (plant sizes unchanged): wind 1 feeder × 2 units of 15 × 5 MW turbines (10 kV, `nPar` = 15), PV 2 feeders × 1 unit of 5 × 5 MW stations (33 kV), one 30 MW / 60 MWh BESS at the 33 kV HPP busbar. Changing the number of units requires `buildHPP`; collector data are in `networkParameters`.
+Asset counts and layout: each plant has `nFeeders` feeders with `nPerFeeder` units; every unit is its own asset instance (converter model and controller) at its own network node. A unit can stand for `nAgg` identical units, and a modelled feeder for `p.net.<type>.cable.nPar` parallel feeders. Default layout (plant sizes 150 / 50 / 30 MW): wind 1 feeder × 2 units of 15 × 5 MW turbines (10 kV, `nPar` = 15), PV 2 feeders × 1 unit of 5 × 5 MW stations (33 kV), one 30 MW / 60 MWh BESS at the 33 kV HPP busbar. A 1 × 1 layout per plant (wind `nAgg` = 30, `nPerFeeder` = 1; PV `nAgg` = 10, `nFeeders` = 1, `nPar` = 2) gives the same results within about 0.15 MW and simulates about 25 % faster. Changing the number of units requires `buildHPP`; collector data are in `networkParameters`.
 
-Network model (branch `grid-components`): the `Network` block holds two models with the same results, chosen per run without rebuilding: `"nodal"` (nodal solver, fast) and `"simscape"` (Simscape Electrical blocks in frequency-and-time mode, component-wise, about 2–3 times slower). Choose it with the `network` setting in `main.m`, or `runCase(set, id, Network="nodal")`, `runSweep(set, Network="simscape")`; the default is `p.net.solverType`, set to `"nodal"`.
+Network model: the `Network` block holds two models with the same results (nominal P_poc within 1 kW, dip within 0.1 MW), chosen per run without rebuilding: `"nodal"` (nodal solver, fast) and `"simscape"` (Simscape Electrical blocks in frequency-and-time mode, component-wise, much slower: about 40 s of simulation per 60 s case). Choose it with the `network` setting in `main.m`, or `runCase(set, id, Network="nodal")`, `runSweep(set, Network="simscape")`; the default is `p.net.solverType`, set to `"nodal"`.
+
+Run time and Fast Restart (nominal 60 s case, nodal network, this laptop). Without Fast Restart every run compiles the model with its referenced controller and asset models, which is most of the time: about 50–100 s per run. With Fast Restart the model stays compiled and every further run only simulates: about 3–16 s per 60 s case with the nodal network (fewer units and more free memory are faster), about 40 s with the Simscape network. Use `runCase(..., FastRestart=true)` (the `fastRestart` setting in `main.m`, on by default) or `runSweep(set, FastRestart=true)` (grid_strength, 3 cases: 25 s in total with the 1 × 1 layout).
+
+Almost all parameters can change between Fast Restart runs without recompiling: controller parameters, set-points, events (dips, frequency steps), grid strength (SCR, X/R, E), cable, transformer and unit data. The nodal network gets its numbers through tunable constants, the Simscape network uses run-time block parameters. Fixed at compile time are only the layout (units per plant), the time step, the communication delays (a variable-length delay would make every run slower) and the network model; `runCase` recompiles by itself when one of these changes, and `runSweep` with Fast Restart refuses case sets that change them. The top model uses a single-step solver (ode1, single-tasking) and logs every 10 ms (`p.sim.logDecimation`). Accelerator mode (needs a C compiler) would mainly shorten the first compile.
 
 Controller parameters (`p.ctrl`, from `controllerParameters`):
 
@@ -99,6 +106,9 @@ A case set is a function in `scripts/+caseSets/` that returns a table. Each colu
 | `grid_Pref_Pbess` | 9: every combination of 3 Pref × 3 BESS ratings | `caseGrid` |
 | `oat_Pref` | 8: Pref and BESS rating varied one at a time | `caseOAT` |
 | `grid_strength` | `SCR10` (default), `SCR5`, `SCR3` | `caseList` |
+| `wt_frt` | `no dip`, `dip 0.5`, `dip 0.8`, `dip 0.5 SCR3` (grid voltage dip at 30 s) | `caseList` |
+| `freq_step` | `no event`, `+0.2 Hz`, `-0.2 Hz`, `+0.2 Hz, no droop` (at 40 s) | `caseList` |
+| `bess_soc` | `SOC0 0.5`, `at SOCmin`, `at SOCmax` | `caseList` |
 
 To add a set, copy one of these files, rename it and edit it. Nothing else needs to change. Three helpers build the table:
 
@@ -126,6 +136,8 @@ In `handpicked`, adding a case is adding one line; the other cases never need ed
 | Nominal case | `runCase()` |
 | One case by name or number | `runCase("handpicked", "noBess")`, `runCase("grid_Pref_Pbess", 4)` |
 | Quick check, no file written | `runCase("oat_Pref", 2, Save=false)` |
+| Rerun without compiling | `runCase(..., FastRestart=true)`, `runSweep(set, FastRestart=true)` |
+| Simscape network instead of nodal | `runCase(..., Network="simscape")`, `runSweep(set, Network="simscape")` |
 | All cases of a set, serial | `runSweep("oat_Pref")` |
 | All cases with a local pool | `runSweep("oat_Pref", UseParallel=true)`, then `delete(gcp('nocreate'))` |
 | Debug a case in the Simulink editor | `c = defineCases("handpicked"); p = applyCase(HPP_parameters(), c("noBess", :));` then open `HPP.slx` and press Run |
@@ -142,7 +154,7 @@ Read signals with `out.yout.get("SOC").Values`. The logged signals:
 | `P_bess_set` | W | HPPC set-point to the BESS plant |
 | `SOC` | – | plant SOC (share-weighted mean of the assets) |
 
-A 60 s case takes about 5–20 s (about 5 s once the models are compiled), against about 1 s for the earlier single-controller model: 13 referenced models, about 40 delay blocks and a 1 ms asset step. Speeding this up (model reference accelerator mode needs the C compiler) is for later.
+Run time: see Parameters, "Run time and Fast Restart". Most of a run without Fast Restart is compiling the referenced models (measured: 49 of 56 s compile time); model reference accelerator mode would shorten that but needs the C compiler.
 
 ## Looking at results
 
@@ -180,7 +192,7 @@ This submits one job per case, each running `runCase(set, i)`. The script counts
 
 ## Status and next steps
 
-- Stages 1 (structure), 2 (network), 3 (IEC Type 4A wind turbine, fault-ride-through case set `wt_frt`) and 4 (WECC REEC_B / REEC_C + REGC_A for PV and BESS, closed-loop asset Q control, REPC_A plant controllers; case sets `bess_soc`, `freq_step`) are done. All controllers are block diagrams in `models/ctrl/`; parameter values (`p.wt.iec`, `p.pv.wecc`, `p.bess.wecc`, `p.pc`) are typical values to be checked against the standards. Each plant controller closes P, frequency and Q loops on its own busbar feeder, like a vendor plant controller. The HPPC is still open loop: losses between the busbar and the POC are not compensated (P_poc 146.5 MW for P_ref 150 MW; Q_poc −10.4 Mvar from the 132 kV transformer), and nothing at the POC coordinates the plants' frequency response. Next: stage 5, the HPPC functions (docs/design.md, section 8).
+- Stages 1 (structure), 2 (network), 3 (IEC Type 4A wind turbine, fault-ride-through case set `wt_frt`) and 4 (WECC REEC_B / REEC_C + REGC_A for PV and BESS, closed-loop asset Q control, REPC_A plant controllers; case sets `bess_soc`, `freq_step`) are done. All controllers are block diagrams in `models/ctrl/`; parameter values (`p.wt.iec`, `p.pv.wecc`, `p.bess.wecc`, `p.pc`) are typical values to be checked against the standards. Each plant controller closes P, frequency and Q loops on its own busbar feeder, like a vendor plant controller. The HPPC is still open loop: losses between the busbar and the POC are not compensated (P_poc 146.5 MW for P_ref 150 MW; Q_poc −10.9 Mvar from the 33/132 kV transformer), and nothing at the POC coordinates the plants' frequency response. Next: stage 5, the HPPC functions (docs/design.md, section 8).
 - Start-up is not initialised in steady state yet: during the first fraction of a second the controllers see zero measurements and the network sees no injection.
 - `SOCmin`, `SOCmax` and `p.ctrl.hppc.par.Ppoc_max` are defined but not used yet.
 - The `"noBattery"` variant bug is fixed: derived parameters are now computed after the variant.

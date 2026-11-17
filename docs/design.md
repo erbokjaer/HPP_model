@@ -1,6 +1,6 @@
 # HPP_model: architecture of the hierarchical plant model
 
-Status: **stages 1–4 built** (2026-11-16): structure, N instances, communication delays, parameter structure, the phasor network, the IEC 61400-27-1 Type 4A wind turbine, the WECC REEC_B / REEC_C + REGC_A models for PV and BESS, closed-loop Q control in every asset controller, and REPC_A plant controllers (WPPC, SPPC, BESSC) with their own P, frequency and Q/V loops. The HPPC still has placeholder (open-loop) logic. Stage 5 not started.
+Status: **stages 1–4 built** (2026-11-16): structure, N instances, communication delays, parameter structure, the phasor network, the IEC 61400-27-1 Type 4A wind turbine, the WECC REEC_B / REEC_C + REGC_A models for PV and BESS, closed-loop Q control in every asset controller, and REPC_A plant controllers (WPPC, SPPC, BESSC) with their own P, frequency and Q/V loops. Since 2026-11-17 also: two network models chosen per run (nodal and Simscape Electrical, section 5) and faster runs with Fast Restart, where almost all parameters change without recompiling (section 11). The HPPC still has placeholder (open-loop) logic. Stage 5 not started.
 Values marked *typical* are starting points to be replaced by project data.
 
 ## 1. Decisions
@@ -9,9 +9,9 @@ Values marked *typical* are starting points to be replaced by project data.
 |---|---|
 | Simulation type in Simulink | **RMS (positive-sequence phasor)**. EMT validation is done in PSCAD. |
 | Which controllers become DLLs | **All controllers**: HPP controller, the three plant controllers and the three asset controllers. They are our own models, not vendor DLLs. |
-| Number of assets | **Per plant: `nFeeders` × `nPerFeeder` units**, each its own asset instance (converter model and controller) at its own network node, so N = nFeeders · nPerFeeder. Test layout: wind 1 × 2, PV 2 × 1, BESS 1 × 1 (N = 2 / 2 / 1). |
+| Number of assets | **Per plant: `nFeeders` × `nPerFeeder` units**, each its own asset instance (converter model and controller) at its own network node, so N = nFeeders · nPerFeeder. Default layout: wind 1 × 2, PV 2 × 1, BESS 1 × 1 (N = 2 / 2 / 1). |
 | Asset model standards | Wind: **IEC 61400-27-1 Ed. 2, Type 4** (full converter). PV and BESS: **WECC second-generation generic models** (REGC / REEC / REPC). |
-| Collector system and grid | Typical values (section 5). Own phasor network model in plain Simulink: no Simscape / Specialized Power Systems dependency. |
+| Collector system and grid | Typical values (section 5). Two network models with the same results, chosen per run: an own nodal phasor solver in plain Simulink (default, fast) and a Simscape Electrical model in frequency-and-time mode (component-wise, slower). Specialized Power Systems is not used. |
 | Communication delays | Included from the start, typical values (section 6). |
 
 ## 2. Hierarchy
@@ -50,14 +50,14 @@ Values marked *typical* are starting points to be replaced by project data.
 | `models/ctrl/WPPC.slx`, `SPPC.slx`, `BESSC.slx` | Plant controllers; vector ports of width N | yes |
 | `models/ctrl/WT_ctrl.slx`, `PV_ctrl.slx`, `BESS_ctrl.slx` | Asset controllers; one instance per asset | yes |
 | `models/assets/WT_asset.slx`, `PV_asset.slx`, `BESS_asset.slx` | Asset plant models: controller instance + generator/converter (+ mechanics / battery) | – |
-| `models/network/Network.slx` | Phasor network: transformers, cables, busbars, grid | – |
-| `models/lib/Delay.slx` (or library block) | Communication delay: transport delay + sample-and-hold | – |
+| `Network` block inside `models/HPP.slx` | Phasor network: Variant Subsystem with the nodal and the Simscape model (section 5) | – |
+| "link" blocks inside `models/HPP.slx` | Unit conversion, measurement memory and communication delay (discrete, whole steps) per signal path | – |
 
 **N assets (decided in stage 1).** Each asset type is one parameterised file, instantiated N times by the build script `utilities/buildHPP.m`, which generates `HPP.slx` with N Model blocks per type and wires them. Instance k gets the model argument `ap = p.<type>.ap(k)` (asset parameters including its controller's `par`). `HPP.slx` stores the N it was built for, and `runCase` / `runSweep` stop if the parameters differ. A For Each subsystem was not used: the build script is simpler to debug, and every instance stays a normal Model block, which code generation and PSCAD handle the same way.
 
 The plant controllers use fixed-width vector ports (width N, from their model workspace), so a DLL is built for one N. Changing N means rerunning `buildHPP(All=true)`, which is acceptable.
 
-**Diagram layout (2026-11-16).** `HPP.slx` is organised as six subsystems (TSO, HPP controller, Wind / PV / BESS plant, Network, Logging) connected by virtual buses in SI units. Each subsystem converts to its controller's per-unit base and applies the communication delays of the links it receives. Controller models keep flat scalar ports for the DLL interface; Bus Selectors and Bus Creators sit around them. Forward signals are lines; feedback and logging signals are colour-coded Goto/From pairs (orange plant measurements, green network, grey logging). Each signal path between levels is one masked "link" block (gain, memory, transport delay). The network is a masked subsystem inside `HPP.slx` rather than a separate `models/network/` file, since its size depends on N and it is not a DLL. The reorganisation changed no results (largest relative difference 6e-13 on all logged signals). HPPC inports are ordered per source (TSO, POC, wind, PV, BESS).
+**Diagram layout (2026-11-16).** `HPP.slx` is organised as six subsystems (TSO, HPP controller, Wind / PV / BESS plant, Network, Logging) connected by virtual buses in SI units. Each subsystem converts to its controller's per-unit base and applies the communication delays of the links it receives. Controller models keep flat scalar ports for the DLL interface; Bus Selectors and Bus Creators sit around them. Forward signals are lines; feedback and logging signals are colour-coded Goto/From pairs (orange plant measurements, green network, grey logging). Each signal path between levels is one masked "link" block (gain, memory, discrete delay). The network is a masked subsystem inside `HPP.slx` rather than a separate `models/network/` file, since its size depends on N and it is not a DLL. The reorganisation changed no results (largest relative difference 6e-13 on all logged signals). HPPC inports are ordered per source (TSO, POC, wind, PV, BESS).
 
 **Aggregation.** One unit can stand for `nAgg` identical physical units at the same place (its unit transformer is scaled with `nAgg`), and one modelled feeder for `cable.nPar` identical parallel feeders (`p.net.<type>.cable`). The test layout keeps the plant sizes with few converter models: wind 2 units × 15 turbines of 5 MW on one feeder that stands for 15 identical feeders (nPar = 15), PV 2 feeders with one unit of 5 inverter stations each, one 30 MW BESS. A full layout (e.g. wind 15 feeders × 2 turbines, PV 2 feeders × 5 stations, all `nAgg` and `nPar` = 1: 41 converter models, 85 nodes) gives practically the same steady state (P_poc 149.46 against 149.40 MW in a static check with all units at the same power).
 
@@ -129,7 +129,7 @@ BESS:  unit 0.69 kV    ─ 0.69/33 kV ─ short 33 kV cable ──────�
 
 Network solution (RMS): per unit on the system base 180 MVA, ideal transformer ratios. `networkSolverData` builds the nodal admittance matrix Y from the layout (asset terminals, feeder taps, plant collector buses, HPP busbar, POC; 13 nodes in the test layout) and stores Z = Y⁻¹ once; each step the masked `Network` subsystem computes `V = Z * (I_inj + I_grid)` in a MATLAB Function block. Each plant's P and Q are the flows of its branches into the 33 kV HPP busbar (wind: its 10/33 kV transformer; PV and BESS: their feeders, including the busbar-end cable charging): these are the plant measurement points. It also returns the HPP busbar voltage and P, Q, V at the POC. Transformer taps and reactive compensation (STATCOM, shunt reactors) can be added later as extra nodes or branches.
 
-**Two network models, chosen per run (branch `grid-components`, 2026-11-17).** The `Network` block in `HPP.slx` is a Variant Subsystem with two choices built from the same layout parameters and with the same ports: `Nodal` (the solver above, fast) and `Simscape` (standard Simscape Electrical three-phase blocks solved in **frequency-and-time mode**: phasors around 50 Hz, one Solver Configuration, local Backward Euler at `p.sim.Ts`, fixed cost with one iteration). The variant control variable `HPP_network` (1 nodal, 2 Simscape, from `networkCode`) is set per run by `runCase(..., Network="nodal" | "simscape")`, `runSweep(..., Network=...)` and the `network` setting in `main.m`; the default is `p.net.solverType` ("nodal"). The inactive choice is not compiled. No rebuild is needed to switch.
+**Two network models, chosen per run (2026-11-17).** The `Network` block in `HPP.slx` is a Variant Subsystem with two choices built from the same layout parameters and with the same ports: `Nodal` (the solver above, fast) and `Simscape` (standard Simscape Electrical three-phase blocks solved in **frequency-and-time mode**: phasors around 50 Hz, one Solver Configuration, local Backward Euler at `p.sim.Ts`, fixed cost with one iteration). The variant control variable `HPP_network` (1 nodal, 2 Simscape, from `networkCode`) is set per run by `runCase(..., Network="nodal" | "simscape")`, `runSweep(..., Network=...)` and the `network` setting in `main.m`; the default is `p.net.solverType` ("nodal"). The inactive choice is not compiled. No rebuild is needed to switch.
 
 - Grid: Controlled Voltage Source (Three-Phase), magnitude E·V_poc as line rms with the dips of `p.grid.dip`, behind a series R-L Z_g from SCR and X/R.
 - HPP transformer 33/132 kV and wind transformer 10/33 kV: Two-Winding Transformer (Three-Phase), Yg/Yg, with a magnetizing branch (`Rm`, `Xm` in `p.net.main` and `p.net.wt.plant`; 1000 pu and 500 pu: 0.1 % no-load loss, 0.2 % magnetizing current). The Simscape model needs a finite branch in this mode; the nodal model has the same branch as a shunt at the 33 kV side (HPP transformer) and the collector side (wind transformer), so both describe the same transformers.
@@ -138,11 +138,11 @@ Network solution (RMS): per unit on the system base 180 MVA, ideal transformer r
 - Converter interface (subsystem per asset): Controlled Current Source (Three-Phase) with magnitude/phase inputs from the asset's current phasor; the terminal voltage comes from a phase voltage sensor turned into a phasor by the space-phasor transform at the nominal frequency (sampled with a Digital Clock), one step old as before. No PLL is needed because the mode returns exact 50 Hz samples.
 - Measurements: Power Sensor (Three-Phase) between each plant node and the HPP busbar (plant measurement points) and at the POC; voltages from the same phasor transform.
 
-Results (test layout), Simscape against nodal, with the same magnetizing branch in both: nominal P_poc 146.526 against 146.525 MW, Q_poc −10.900 against −10.883 Mvar, P_wpp 132.133 against 132.131 MW; dip 0.5 V_poc 0.564 pu in both, Q_wpp 51.33 against 51.35 Mvar, P_poc during the dip 85.55 against 85.50 MW, largest P_poc difference over the dip 0.10 MW (one step at fault clearing), median 0.001 MW. (Before the branch was added to the nodal model, P_poc differed by 0.84 MW: the magnetizing loss with 500 pu.) +0.2 Hz and BESS at SOCmin also gave the same results. No ripple (below 1e-10 MW); plant Q loops settle to 0. Run time of a 60 s case including compilation: nodal about 45–60 s, Simscape about 120–135 s. Layout of the `Network` subsystem: current injections (left), one row per converter in each plant area (converter interface, unit impedance, feeder segment), plant transformer and meter, then a grid column (grid voltage with dips; HPP transformer, POC meter, Z_g and E; bus and POC voltages with the Solver Configuration) and the output buses (right). Electrical nodes are joined by Connection Labels (`wpp_collector`, `tap_1`, `HPP_bus`, `POC`), signals by local Goto/From. Standalone test models: `experiments/simscapeGrid/ftGridTest.m`.
+Results (default layout), Simscape against nodal, with the same magnetizing branch in both: nominal P_poc 146.526 against 146.525 MW, Q_poc −10.900 against −10.883 Mvar, P_wpp 132.133 against 132.131 MW; dip 0.5 V_poc 0.564 pu in both, Q_wpp 51.33 against 51.35 Mvar, P_poc during the dip 85.55 against 85.50 MW, largest P_poc difference over the dip 0.10 MW (one step at fault clearing), median 0.001 MW. (Before the branch was added to the nodal model, P_poc differed by 0.84 MW: the magnetizing loss with 500 pu.) +0.2 Hz and BESS at SOCmin also gave the same results. No ripple (below 1e-10 MW); plant Q loops settle to 0. Run time: section 11. Layout of the `Network` subsystem: current injections (left), one row per converter in each plant area (converter interface, unit impedance, feeder segment), plant transformer and meter, then a grid column (grid voltage with dips; HPP transformer, POC meter, Z_g and E; bus and POC voltages with the Solver Configuration) and the output buses (right). Electrical nodes are joined by Connection Labels (`wpp_collector`, `tap_1`, `HPP_bus`, `POC`), signals by local Goto/From. Standalone test models: `experiments/simscapeGrid/ftGridTest.m`.
 
 Generator interface (wind: behind the Type 4A generator system since stage 3; PV/BESS: placeholder until stage 4): current source aligned with the terminal voltage, I = (i_p − j·i_q)·V/|V|, so P = |V|·i_p and Q = |V|·i_q. The voltage used is that of the previous step (as a PLL would), which also avoids an algebraic loop through the network.
 
-Results with the stage-4b layout (nominal case, plant Q loops closed at their measurement points): P_poc 146.95 MW (146.47 MW with the stage-2 network), Q_poc −10.4 Mvar, V_poc 0.999 pu, V_bus 0.998 pu. Dip 0.5: V_poc 0.56 pu, P_poc back at 146.7 MW after 1 s. A 60 s run takes about 11 s (5 converter models).
+Results with the stage-4b layout (nominal case, plant Q loops closed at their measurement points): P_poc 146.95 MW (146.47 MW with the stage-2 network), Q_poc −10.4 Mvar, V_poc 0.999 pu, V_bus 0.998 pu. Dip 0.5: V_poc 0.56 pu, P_poc back at 146.7 MW after 1 s. Run time: section 11.
 
 ## 6. Communication delays and rates  (typical values)
 
@@ -155,14 +155,14 @@ Results with the stage-4b layout (nominal case, plant Q loops closed at their me
 | Plant controller → asset controllers | 20 ms | asset controllers: 1 ms (= sim step) |
 | Asset measurements → asset controller | 0 (local) | |
 
-Delays are parameters (`p.comm.*`) so case sets can sweep them. Implemented as a transport delay; the receiving controller samples it at its own rate. Every measurement path into a controller also has a one-step memory (1 ms): without it, the loops through the controllers' direct feedthrough are algebraic loops when a delay is 0. The TSO delays start at the initial set-point, so the HPPC does not see a zero reference at start-up.
+Delays are parameters (`p.comm.*`) so case sets can sweep them. Implemented as a discrete delay of whole simulation steps (`round(delay / p.sim.Ts)`), fixed when the model is compiled; the receiving controller samples it at its own rate. Every measurement path into a controller also has a one-step memory (1 ms): without it, the loops through the controllers' direct feedthrough are algebraic loops when a delay is 0. The TSO delays start at the initial set-point, so the HPPC does not see a zero reference at start-up.
 
 ## 7. Parameters
 
 ```
-p.sim            solver step 1 ms, stop time
+p.sim            solver step 1 ms, stop time, logging decimation (every 10 ms)
 p.grid           POC, base, grid SCR, X/R, frequency
-p.net            transformers, cables, lengths per feeder
+p.net            transformers (incl. magnetizing branch), cables, lengths per feeder; solverType = default network model
 p.comm           communication delays
 p.wt  / p.pv / p.bess   nFeeders, nPerFeeder, nAgg, Pn (N, Prated derived), asset-model parameters
 p.ctrl.hppc      Ts, Pbase, par
@@ -203,4 +203,24 @@ Afterwards: code generation of every controller (needs the Coder products and a 
 
 ## 10. Open points
 - Steady-state initialisation at start-up (controllers currently start from zero measurements).
-- Simulation speed: model reference accelerator mode (needs the C compiler), fewer delay blocks, or a larger asset step.
+- Simulation speed: largely solved with Fast Restart (section 11). Still open: the first compile per session (about 20–60 s) and the Simscape network's own simulation time; model reference accelerator mode (needs the C compiler) would help both.
+
+## 11. Simulation and run time  (2026-11-17)
+
+Measured on the laptop (16 GB RAM), nominal 60 s case.
+
+**Where the time goes.** Without Fast Restart most of a run is compiling, not simulating. `sldiagnostics` on the compile: 56 s in total, of which 23.5 s "finding and refreshing Model blocks" (loading the referenced controller and asset models; 0.6 s when they are already loaded) and 25.5 s "compiling the referenced models in normal mode". The simulation itself takes about 3–16 s with the nodal network (fewer units and more free memory are faster) and about 40 s with the Simscape network.
+
+**Settings of the top model.**
+- Solver ode1 (one evaluation per step) instead of ode4, single-tasking. The asset models keep their continuous current lags (`Tg`) and SOC integrator; making them discrete gave no speed gain and moved P during a dip by 2–3 MW, so it was not kept.
+- Communication delays: discrete delays of whole steps instead of continuous transport delays.
+- Logging every 10 ms (`p.sim.logDecimation`).
+Effect: about 15 % faster per run; steady state unchanged, dip values within 0.7 MW.
+
+**Fast Restart.** `runCase(..., FastRestart=true)` (the `fastRestart` setting in `main.m`, on by default) keeps `HPP.slx` compiled in the MATLAB session; `runSweep(..., FastRestart=true)` compiles once per case set. Almost all parameters change between runs without recompiling:
+- controller parameters (`par` model arguments), set-points, events (dip, frequency step);
+- nodal network: the numbers (impedance matrix, grid impedance, branch impedances and charging, E) enter the solver through tunable Constant blocks; only the node structure is fixed;
+- Simscape network: R, L, C and transformer data are run-time block parameters.
+Fixed at compile time: the layout (units per plant), the time step, the communication delays and the network model. `runCase` remembers these for the compiled model and recompiles by itself when one changes; `runSweep` with Fast Restart refuses case sets that change them. Tried and dropped: the whole network data as one tunable parameter structure and variable-length delays; each made every run 0.5–0.75 s per simulated second slower.
+
+Measured: 1 × 1 layout per plant, nodal network: first run including compile about 18 s, every further run about 3 s; an SCR change without recompiling gives the same result as a full run (V_poc 0.9653 at SCR 3); `grid_strength` (3 cases) 25 s in total. Default layout (2 / 2 / 1): first run about 50 s, further runs about 16 s. Simscape network: about 40 s per further run.

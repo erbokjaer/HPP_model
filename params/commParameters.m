@@ -1,7 +1,8 @@
 function comm = commParameters()
 %COMMPARAMETERS  Communication delays between control levels (typical values).
-%   Applied in HPP.slx as a transport delay on the signal; the receiving
-%   controller samples the delayed signal at its own rate. All in seconds.
+%   Applied in HPP.slx as a discrete delay of round(T / p.sim.Ts) steps,
+%   fixed at compile time; the receiving controller samples the delayed
+%   signal at its own rate. All in seconds.
 %   Set all to 0 to compare with a model without communication delays.
 
     comm.tso           = 0.200;  % TSO set-points -> HPPC
