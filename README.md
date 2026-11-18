@@ -106,10 +106,10 @@ A case set is a function in `scripts/+caseSets/` that returns a table. Each colu
 | `grid_Pref_Pbess` | 9: every combination of 3 Pref × 3 BESS ratings | `caseGrid` |
 | `oat_Pref` | 8: Pref and BESS rating varied one at a time | `caseOAT` |
 | `grid_strength` | `SCR10` (default), `SCR5`, `SCR3` | `caseList` |
-| `wt_frt` | `no dip`, `dip 0.5`, `dip 0.8`, `dip 0.5 SCR3` (grid voltage dip at 30 s) | `caseList` |
-| `freq_step` | `no event`, `+0.2 Hz (LFSM-O limit)`, `+0.5 Hz LFSM-O`, `-0.5 Hz LFSM-U`, `+0.2 Hz FSM`, `-0.2 Hz FSM`, `+0.5 Hz FSM + LFSM-O`, `+0.5 Hz, no response`, `+0.2 Hz, decentral`, `-0.2 Hz, decentral` (at 40 s) | `caseList` |
-| `hppc_qv` | Q steps ±30 Mvar, Q open loop, voltage control after a 2 % grid voltage drop (slopes 2 / 4 / 7 %, SCR 10 / 3, mis-set SCR), Q control in the same event, `Vref 1.01`, `PF 0.95 export` / `import` (events at 40 s) | `caseList` |
-| `hppc_p` | `Pref 150 MW`, `step -30 MW`, `step +20 MW`, `step +40 MW (limit)`, `step -30 MW, 10 %/min`, `step -30 MW, no ramp`, `open loop`, `open loop, -30 MW` (P_ref step at 40 s, 120 s runs) | `caseList` |
+| `wt_frt` | `no dip`, `dip 0.5`, `dip 0.8`, `dip 0.5 SCR3` (150 ms grid voltage dip at 45 s, after the plant has ramped up) | `caseList` |
+| `freq_step` | `no event`, `+0.2 Hz (LFSM-O limit)`, `+0.5 Hz LFSM-O`, `-0.5 Hz LFSM-U`, `+0.2 Hz FSM`, `-0.2 Hz FSM`, `+0.5 Hz FSM + LFSM-O`, `+0.2 Hz, decentral`, `-0.2 Hz, decentral` (at 50 s, 70 s runs) | `caseList` |
+| `hppc_qv` | Q steps ±30 Mvar, voltage control after a 2 % grid voltage drop (slopes 2 / 4 / 7 %, SCR 10 / 3, mis-set SCR), Q control in the same event, `Vref 1.01`, `PF 0.95 export` / `import` (events at 40 s) | `caseList` |
+| `hppc_p` | `Pref 150 MW`, `step -30 MW`, `step +20 MW`, `step +40 MW (limit)`, `step -30 MW, 10 %/min`, `step -30 MW, no ramp` (P_ref step at 40 s, 120 s runs) | `caseList` |
 | `bess_soc` | `SOC0 0.5`, `SOC0 0.15`, `at SOCmin`, `SOC0 0.85`, `at SOCmax`, `SOC0 0.5, +20 MW`, `SOC0 0.15, +20 MW` | `caseList` |
 
 To add a set, copy one of these files, rename it and edit it. Nothing else needs to change. Three helpers build the table:
@@ -167,14 +167,21 @@ plotResults(out, Cases=defineCases("oat_Pref"))   % straight from runSweep, noth
 plotResults(..., Signals=["P_poc","SOC"])    % choose signals
 plotResults(..., Theme="light")              % light figure for reports
 plotResults(..., NewFigure=true)             % keep the old figure, open another
-plotAllResults()                             % every saved set, in the background, to results/figures/
-plotAllResults(Mode="showAndSave")           % ... docked figures open as well; Mode="show": no files
+plotAllResults(Purpose="report")             % report figures (reportFigures.m) -> results/figures/report/
+plotAllResults()                             % debug figures of every saved set -> results/figures/debug/
+plotAllResults("wt_frt", Mode="showAndSave") % ... figures open as well; Mode="show": no files
 
 T = summarizeResults("grid_Pref_Pbess")      % final, min and max per signal and case
 [out, cases] = loadResults("handpicked")     % the saved runs, for your own analysis
 ```
 
 Plots have one panel per signal on a shared time axis, powers in MW, and lines labelled by case name or by the values the case changes (`Pref=100 MW, Pmax=0 MW`). Line colours come from the DTU design guide (`dtuColors`: DTU blue, corporate red, green, orange, purple, navy, red; lighter DTU tints on a dark figure); the background follows the MATLAB theme. Figures are always docked, and plotting the same set again redraws its existing figure (one figure per title, by default the set name) instead of opening a new one. `loadResults` uses `results/<set>/sweep.mat` if it exists, otherwise all `case_NNN.mat` files of the set. For interactive browsing of a single run, Simulink's Simulation Data Inspector also works: `Simulink.sdi.view`.
+
+`plotAllResults` has two purposes:
+- **report:** one small figure per point a case set makes, defined in `scripts/reportFigures.m`. Each entry gives the cases, the signals per axis (at most two or three axes), the time window (fault cases zoomed on the fault) and a one-line statement of what the figure shows. Figures are 8.8 cm wide (one column), 8 pt Times, legend inside the top axis, references (P_ref, Q_ref, available power) dashed; saved as vector PDF for LaTeX (`\includegraphics` at natural size) plus a PNG preview. Add or change a figure by editing `reportFigures.m`.
+- **debug:** every logged signal of every case of a set in one large figure (P, Q, V, f, plant P with availability, BESS P with set-point, SOC, plant Q), full time plus a zoom on the event (`<set>_zoom`); PNG and `.fig`.
+
+Logged signals (`out.yout`): `P_poc`, `Q_poc`, `V_poc`, `V_bus`, `P_ref`, `Q_ref`, `f`, `P_wpp`, `P_spp`, `P_bess`, `P_bess_set`, `P_avail_wpp`, `P_avail_spp`, `Q_wpp`, `Q_spp`, `Q_bess`, `SOC`.
 
 Serial is the default for `runSweep`. Each pool worker needs about 1 GB of RAM, and on a 16 GB laptop starting a pool next to the desktop session has crashed MATLAB.
 

@@ -14,7 +14,5 @@ function cases = hppc_p()
         "step +40 MW (limit)",     [T, {"grid.Pstep.dP",  40e6}]
         "step -30 MW, 10 %/min",   [T, {"grid.Pstep.dP", -30e6, "hppc.rampUp", 0.10, "hppc.rampDn", 0.10}]
         "step -30 MW, no ramp",    [T, {"grid.Pstep.dP", -30e6, "hppc.rampFlag", 0}]
-        "open loop",               [T, {"hppc.Pflag", 0}]
-        "open loop, -30 MW",       [T, {"hppc.Pflag", 0, "grid.Pstep.dP", -30e6}]
     });
 end

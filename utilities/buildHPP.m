@@ -244,7 +244,7 @@ function buildTop(p, folder)
     setPos(m + "/Network", [990, yI - D/2, 1190, yI - D/2 + 3*D]);
     yT = portY(m + "/HPP controller", "in", 1);
     setPos(m + "/TSO", [20, yT - 35, 120, yT + 35]);
-    setPos(m + "/Logging", [1510 60 1630 60 + 12*36]);
+    setPos(m + "/Logging", [1510 60 1630 60 + numel(logSignalNames())*36]);
 
     % block colours by role: controllers blue, plants green, network grey
     set_param(m + "/HPP controller", "BackgroundColor", areaColor("controller"));
@@ -263,8 +263,9 @@ function buildTop(p, folder)
         ln(m, sprintf("HPP controller/%d", i), pt + "/1", "set-points " + plants(i).tag);
         ln(m, pt + "/2", sprintf("Network/%d", i), "I " + plants(i).tag);
     end
-    gotoFrom(m, "Wind plant/1", "HPP controller/3", "meas_wpp", orange, "meas wpp");
-    gotoFrom(m, "PV plant/1", "HPP controller/4", "meas_spp", orange, "meas spp");
+    gotoFrom(m, "Wind plant/1", ["HPP controller/3", "Logging/6"], "meas_wpp", orange, "meas wpp");
+    gotoFrom(m, "PV plant/1", ["HPP controller/4", "Logging/7"], "meas_spp", orange, "meas spp");
+    gotoFrom(m, "TSO/1", "Logging/5", "tso", grey, "TSO");
     gotoFrom(m, "BESS plant/1", ["HPP controller/5", "Logging/4"], "meas_bess", orange, "meas bess");
     gotoFrom(m, "Network/1", ["Wind plant/2", "PV plant/2", "BESS plant/2", "Logging/1"], "network", green, "network");
     gotoFrom(m, "Network/2", ["HPP controller/2", "Logging/2"], "POC_meas", green, "POC meas");
@@ -280,10 +281,11 @@ function buildTop(p, folder)
         "BackgroundColor", grey, "ShowName", "off", "Position", [lpos(1)-160, lpos(2)-11, lpos(1)-40, lpos(2)+11]);
     ln(m, "set-points_bess from/1", "Logging/3", "");
 
-    logNames = ["P_poc","SOC","P_bess_set","Q_poc","P_wpp","P_spp","P_bess","Q_wpp","Q_spp","Q_bess","V_poc","V_bus"];
+    logNames = logSignalNames();
     lp = get_param(m + "/Logging", "PortConnectivity");
+    nIn = numel(get_param(m + "/Logging", "PortHandles").Inport);
     for k = 1:numel(logNames)
-        y = lp(4 + k).Position(2);        % align each outport with its Logging port
+        y = lp(nIn + k).Position(2);      % align each outport with its Logging port
         add_block("simulink/Sinks/Out1", m + "/" + logNames(k), "Port", num2str(k), ...
             "Position", [1710 y-7 1740 y+7]);
         ln(m, sprintf("Logging/%d", k), logNames(k) + "/1", logNames(k));
@@ -468,10 +470,10 @@ end
 
 % ---------------------------------------------------------------------
 function buildLogging(sys)
-    % Picks the logged signals out of the buses; its 12 outputs feed the
+    % Picks the logged signals out of the buses; its outputs feed the
     % top-level outports (out.yout). One straight row per logged signal.
     newSubsystem(sys);
-    order = ["P_poc","SOC","P_bess_set","Q_poc","P_wpp","P_spp","P_bess","Q_wpp","Q_spp","Q_bess","V_poc","V_bus"];
+    order = logSignalNames();
     port = @(n) num2str(find(order == n));
     pitch = 34;  xs = 200;  y = 40;
 
@@ -522,11 +524,37 @@ function buildLogging(sys)
     end
     add_block("simulink/Sinks/Out1", sys + "/V_bus", "Port", port("V_bus"), "Position", [0 0 30 14]);
     rowFrom(sys, "network sel/3", "V_bus", "", 200);
+    y = y + 3*(3*pitch+30) + 20;
+
+    % TSO references and grid frequency; available power of wind and PV
+    groups = {"TSO", 5, ["P_ref", "Q_ref", "f_meas"], ["P_ref", "Q_ref", "f"]; ...
+              "meas wpp", 6, "P_avail", "P_avail_wpp"; ...
+              "meas spp", 7, "P_avail", "P_avail_spp"};
+    for g = 1:size(groups, 1)
+        [gname, gport, elems, logn] = groups{g, :};
+        inport(sys, gname, gport);
+        sel = gname + " sel";
+        add_block("simulink/Signal Routing/Bus Selector", sys + "/" + sel, ...
+            "Position", [xs y xs+5 y+numel(elems)*pitch]);
+        rowInto(sys, sel + "/1", gname, "", 50);
+        set_param(sys + "/" + sel, "OutputSignals", char(strjoin(elems, ",")));
+        for j = 1:numel(elems)
+            add_block("simulink/Sinks/Out1", sys + "/" + logn(j), "Port", port(logn(j)), "Position", [0 0 30 14]);
+            rowFrom(sys, sel + "/" + j, logn(j), "", 200);
+        end
+        y = y + numel(elems)*pitch + 20;
+    end
     % ports were created in row order; set the final numbers explicitly
     renumberPorts(sys, order);
-    renumberPorts(sys, ["network", "POC meas", "set-points bess", "meas bess"]);
+    renumberPorts(sys, ["network", "POC meas", "set-points bess", "meas bess", "TSO", "meas wpp", "meas spp"]);
     set_param(sys, "Description", "Selects the logged signals (W, var, pu) for the top-level outports.");
     hideStructuralNames(sys);
+end
+
+function names = logSignalNames()
+    % logged signals in outport order (out.yout); plotAll reads them by name
+    names = ["P_poc","SOC","P_bess_set","Q_poc","P_wpp","P_spp","P_bess","Q_wpp","Q_spp","Q_bess", ...
+             "V_poc","V_bus","P_ref","Q_ref","f","P_avail_wpp","P_avail_spp"];
 end
 
 %% ===================================================================
