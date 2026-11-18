@@ -64,7 +64,7 @@ Communication delays (`p.comm`, typical 20–200 ms) are discrete delays of whol
 |---|---|
 | `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, network, communication, plant controllers, HPPC) and then `deriveParameters` (controller parameters, per-instance asset arguments, network Z matrix). |
 | `models/` | `HPP.slx`, plus `ctrl/` (7 controllers) and `assets/` (3 asset models). |
-| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `checkModelBuild`, `networkCode`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. Results: `plotResults`, `summarizeResults`, `loadResults`, `caseLabels`, `dtuColors`. |
+| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `checkModelBuild`, `networkCode`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. Results: `plotResults`, `plotAllResults`, `summarizeResults`, `loadResults`, `caseLabels`, `dtuColors`. |
 | `scripts/+caseSets/` | Which variations to run: one file per case set. |
 | `utilities/` | `projectStartup.m` (runs when the project opens) and `buildHPP.m` (builds the models). |
 | `docs/` | `design.md`: architecture and plan. |
@@ -166,6 +166,8 @@ plotResults(out, Cases=defineCases("oat_Pref"))   % straight from runSweep, noth
 plotResults(..., Signals=["P_poc","SOC"])    % choose signals
 plotResults(..., Theme="light")              % light figure for reports
 plotResults(..., NewFigure=true)             % keep the old figure, open another
+plotAllResults()                             % every saved set, in the background, to results/figures/
+plotAllResults(Mode="showAndSave")           % ... docked figures open as well; Mode="show": no files
 
 T = summarizeResults("grid_Pref_Pbess")      % final, min and max per signal and case
 [out, cases] = loadResults("handpicked")     % the saved runs, for your own analysis

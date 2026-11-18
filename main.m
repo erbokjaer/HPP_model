@@ -2,15 +2,13 @@
 %  Edit the settings below, then press Run (or F5).
 %  listCaseSets() shows the available case sets; defineCases("<set>") shows
 %  the cases in a set with their numbers and names.
-
-
+tic
 % Settings
 setName  = "nominal";                 % case set in scripts/+caseSets
 caseIds  = [];     % names or numbers, e.g. [1 4 7]; [] = all cases
 rerun    = true;                      % false = reuse saved results where they exist
 fastRestart = true;                   % keep the model compiled between runs (reruns skip the compile)
 network  = "nodal";                   % "nodal" (fast) or "simscape" (Simscape Electrical, ~5x slower)
-% network  = "simscape";  
 signals  = ["P_poc", "Q_poc", "V_poc", "P_wpp", "P_spp", "P_bess", "SOC"];
 theme    = "auto";                    % "auto" (MATLAB theme), "light" or "dark"
 exportTo = "";                        % e.g. "figures/handpicked.png"; "" = no export
@@ -22,8 +20,7 @@ if isempty(caseIds)
 end
 cases = allCases(caseIds, :);
 fprintf("\n%s: %d case(s)\n", setName, height(cases));
-
-% Run (or load)
+%% Run (or load)
 out = Simulink.SimulationOutput.empty;
 for k = 1:height(cases)
     id = caseIds(k);
@@ -39,6 +36,11 @@ for k = 1:height(cases)
     out(k) = runCase(setName, id, Network=network, FastRestart=fastRestart);
 end
 
+% Summary
+summary = summarizeResults(out, Cases=cases, Signals=signals);
+disp(summary)
+toc
+
 %% Plot
 fig = plotResults(out, Cases=cases, Signals=signals, Theme=theme, Title=setName);
 if exportTo ~= ""
@@ -50,6 +52,3 @@ if exportTo ~= ""
     fprintf("Exported %s\n", exportTo);
 end
 
-% Summary
-summary = summarizeResults(out, Cases=cases, Signals=signals);
-disp(summary)
