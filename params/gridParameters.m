@@ -7,6 +7,11 @@ function grid = gridParameters()
     grid.Pref     = 150e6;   % [W]  plant power reference (from TSO/market)
     grid.f0       = 50;      % [Hz] nominal frequency
 
+    % Step in the TSO power reference (Pref + dP from t0); dP 0 = no step.
+    % Case set hppc_p.
+    grid.Pstep.t0 = 40;      % [s]  time of the step
+    grid.Pstep.dP = 0;       % [W]  change of Pref
+
     % Grid Thevenin equivalent at the POC
     grid.Vpoc = 132e3;       % [V]  nominal POC voltage
     grid.SCR  = 10;          % [-]  short-circuit ratio, Ssc / Pmax_poc

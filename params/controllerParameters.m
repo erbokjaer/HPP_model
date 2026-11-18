@@ -25,6 +25,7 @@ function ctrl = controllerParameters(p)
     ctrl.hppc.par.Ppoc_max = p.grid.Pmax_poc / ctrl.hppc.Pbase;   % [pu] (not used yet)
     Prated = [p.wt.Prated; p.pv.Prated; p.bess.Prated];
     ctrl.hppc.par.qshare = Prated / sum(Prated);                  % [-] Q_ref split wind/PV/BESS
+    ctrl.hppc.par = copyFields(ctrl.hppc.par, p.hppc);            % P loop, frequency response (hppcParameters)
 
     % Plant controllers: equal share per asset instance
     ctrl.wppc  = plantCtrl(p.wt.Prated,   p.wt.N);

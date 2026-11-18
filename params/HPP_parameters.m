@@ -23,6 +23,7 @@ function p = HPP_parameters(variant)
     p.net  = networkParameters();
     p.comm = commParameters();
     p.pc   = plantControlParameters();
+    p.hppc = hppcParameters();
 
     switch variant
         case "default"

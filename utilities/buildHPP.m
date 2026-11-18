@@ -9,6 +9,8 @@ function buildHPP(opts)
 %   buildHPP(All=true, Force=true)  regenerate every controller and asset
 %                                 model from the template: OVERWRITES them,
 %                                 including any hand-made changes
+%   buildHPP(All=true, Force=true, Only="HPPC")  regenerate only the named
+%                                 models (controller names or "<type>_asset")
 %
 %   Ownership: HPP.slx is always generated (its structure depends on N), so
 %   never edit it by hand. Controller and asset models are normal,
@@ -38,6 +40,7 @@ function buildHPP(opts)
     arguments
         opts.All (1,1) logical = false
         opts.Force (1,1) logical = false
+        opts.Only (1,:) string = strings(1, 0)   % with All: (re)build only these models, e.g. "HPPC"
     end
 
     root = currentProject().RootFolder;
@@ -57,8 +60,13 @@ function buildHPP(opts)
         % controllers before assets (assets reference the asset controllers)
         specs = controllerSpecs();
         for k = 1:numel(specs)
+            if ~isempty(opts.Only) && ~any(opts.Only == specs(k).name)
+                continue
+            end
             if opts.Force || ~isfile(fullfile(dirs.ctrl, specs(k).name + ".slx"))
-                if specs(k).name == "WT_ctrl"
+                if specs(k).name == "HPPC"
+                    buildHppcCtrl(dirs.ctrl);           % stage 5: closed-loop P, frequency response
+                elseif specs(k).name == "WT_ctrl"
                     buildWTCtrlType4A(dirs.ctrl);      % stage 3: IEC 61400-27-1 Type 4A
                 elseif any(specs(k).name == ["WPPC", "SPPC", "BESSC"])
                     buildPlantCtrlRepc(specs(k).name, dirs.ctrl);      % WECC REPC_A plant controllers
@@ -72,6 +80,9 @@ function buildHPP(opts)
             end
         end
         for type = ["WT", "PV", "BESS"]
+            if ~isempty(opts.Only) && ~any(opts.Only == type + "_asset")
+                continue
+            end
             if opts.Force || ~isfile(fullfile(dirs.assets, type + "_asset.slx"))
                 buildAsset(type, dirs.assets);
             else
@@ -108,7 +119,7 @@ function specs = controllerSpecs()
         "Q_set_spp  = Q_ref * par.qshare(2);"
         "Q_set_bess = Q_ref * par.qshare(3);"];
     specs(end+1) = spec("HPPC", "hppc", dims(in), dims(out), body, ...
-        "HPP controller. Per unit on p.ctrl.hppc.Pbase (POC base). Placeholder dispatch.");
+        "HPP controller. Per unit on p.ctrl.hppc.Pbase (POC base). Model: buildHppcCtrl (stage 5).");
 
     % ---- Plant controllers (base: plant rating; vectors of width N) ----
     for pc = [struct("name","WPPC","cfield","wppc","bess",false), ...
@@ -301,6 +312,10 @@ function buildTSO(sys)
         if names(j) == "f_meas"   % grid frequency with the optional step (p.grid.fev)
             add_block("simulink/Sources/Step", sys + "/" + names(j), "Time", "p.grid.fev.t0", ...
                 "Before", "1", "After", "1 + p.grid.fev.df", "SampleTime", "0", "Position", [0 0 90 26]);
+        elseif names(j) == "P_ref"   % power reference with the optional step (p.grid.Pstep)
+            add_block("simulink/Sources/Step", sys + "/" + names(j), "Time", "p.grid.Pstep.t0", ...
+                "Before", "p.grid.Pref", "After", "p.grid.Pref + p.grid.Pstep.dP", "SampleTime", "0", ...
+                "Position", [0 0 90 26]);
         else
             add_block("simulink/Sources/Constant", sys + "/" + names(j), "Value", vals(j), "Position", [0 0 90 26]);
         end
@@ -1797,6 +1812,148 @@ function buildReecCtrl(type, folder)
     end
     hOut = ctrlOutputs(mdl, ["ip_cmd", "iq_cmd", "P_avail"], ["@ip_cmd", "@iq_cmd", pa], max([r1 r2 r3 r4]) + 110, cm);
     alignColumns(hIn, [h1 h2 h3 h4], hOut);
+    ctrlSave(mdl, folder);
+end
+
+%% ===================================================================
+%  HPPC template (stage 5): closed-loop P at the POC with the frequency
+%  response of the whole plant (central control), dispatch to the plants
+%  (wind and PV at available power, the BESS balances; wind and PV are
+%  curtailed only when the BESS cannot absorb the surplus). Q_ref is still
+%  split by rating, open loop. Ports (pu on p.ctrl.hppc.Pbase):
+%    in   1 P_ref 2 Q_ref 3 f_meas 4 P_poc 5 Q_poc 6 V_poc
+%         7 P_avail_wpp 8 P_wpp 9 Q_wpp 10 P_avail_spp 11 P_spp 12 Q_spp
+%         13 P_chg_max_bess 14 P_dis_max_bess 15 SOC_bess 16 P_bess 17 Q_bess
+%    out  1 P_set_wpp 2 Q_set_wpp 3 P_set_spp 4 Q_set_spp 5 P_set_bess 6 Q_set_bess
+%  ===================================================================
+function buildHppcCtrl(folder)
+    mdl = "HPPC";
+    ctrlHeader(mdl, "hppc", ...
+        "HPP controller (stage 5): closed-loop P control at the POC (PI on P_target - P_poc, target " + ...
+        "fed forward, Pflag) with the frequency response of the plant (droop Ddn / Dup with deadband, " + ...
+        "Frqflag), limited to the available power and the POC export limit; dispatch: wind and PV at " + ...
+        "available power, the BESS balances, wind and PV curtailed when the BESS is at its charge limit. " + ...
+        "Q_ref split by rating (open loop). Per unit on p.ctrl.hppc.Pbase. Parameters: model argument " + ...
+        "par (= p.ctrl.hppc.par, from p.hppc).", false);
+    ins = ["P_ref", "Q_ref", "f_meas", "P_poc", "Q_poc", "V_poc", "P_avail_wpp", "P_wpp", "Q_wpp", ...
+           "P_avail_spp", "P_spp", "Q_spp", "P_chg_max_bess", "P_dis_max_bess", "SOC_bess", "P_bess", "Q_bess"];
+    outs = ["P_set_wpp", "Q_set_wpp", "P_set_spp", "Q_set_spp", "P_set_bess", "Q_set_bess"];
+    cm.ref  = ["P_ref", "Q_ref", "P_target", "P_ord", outs];
+    cm.meas = ["f_meas", "P_poc", "Q_poc", "V_poc", "P_avail_wpp", "P_wpp", "Q_wpp", "P_avail_spp", ...
+               "P_spp", "Q_spp", "P_chg_max_bess", "P_dis_max_bess", "SOC_bess", "P_bess", "Q_bess", ...
+               "P_filt", "P_hi", "P_lo"];
+    [hIn, x] = ctrlInputs(mdl, ins, repmat("1", 1, numel(ins)), cm);
+
+    % measurements and plant P limits
+    lagBlk(mdl, "P filt", "par.Tp", "0");
+    nb(mdl, "sum", "available", "Inputs", "+++");
+    set_param(mdl + "/available", "Position", [0 0 30 80]);
+    nb(mdl, "gain", "charge limit", "Gain", "-1");
+    body = [
+        "% Freeze the P loop while the POC voltage is below Vfrz (voltage dip)"
+        "% and for Thld after it, while the assets recover their active power."
+        "persistent n"
+        "if isempty(n), n = 0; end"
+        "if V_poc < par.Vfrz"
+        "    n = round(par.Thld / Ts);"
+        "elseif n > 0"
+        "    n = n - 1;"
+        "end"
+        "frz = double(V_poc < par.Vfrz || n > 0);"];
+    addMatlabFunction(mdl + "/dip freeze", "dip_freeze", ["V_poc", "Ts"], "frz", body, "par", [0 0 120 70]);
+    kc(mdl, "Ts", "Ts");
+    rowsM = {
+        [stg("@P_poc", 0), stg("P filt"), stg(">P_filt")]
+        [stg("@V_poc", 0), stg("dip freeze", 1, {2, "Ts"}), stg(">frz")]
+        [stg("@P_avail_wpp", 0), stg("available", 1, {2, "@P_avail_spp"; 3, "@P_dis_max_bess"}), stg(">P_hi")]
+        [stg("@P_chg_max_bess", 0), stg("charge limit"), stg(">P_lo")]};
+    [y, h1, r1] = ctrlSection(mdl, "Measurements and P limits", rowsM, x, 20, cm, areaColor("interface"));
+
+    % frequency response: P_target = P_ref + droop (Frqflag), export limit
+    kc(mdl, "Freq_ref", "par.Freq_ref");
+    nb(mdl, "sum", "f error", "Inputs", "+-");
+    nb(mdl, "dz", "fdbd", "LowerValue", "par.fdbd1", "UpperValue", "par.fdbd2");
+    nb(mdl, "sat", "under-f", "UpperLimit", "inf", "LowerLimit", "0");
+    nb(mdl, "sat", "over-f", "UpperLimit", "0", "LowerLimit", "-inf");
+    nb(mdl, "gain", "Dup", "Gain", "par.Dup");
+    nb(mdl, "gain", "Ddn", "Gain", "par.Ddn");
+    nb(mdl, "sum", "P_ref + droop", "Inputs", "+++");
+    set_param(mdl + "/P_ref + droop", "Position", [0 0 30 80]);
+    kc(mdl, "Frqflag", "par.Frqflag");
+    nb(mdl, "switch", "freq response?", "Criteria", "u2 ~= 0");
+    kc(mdl, "Ppoc_max", "par.Ppoc_max");
+    nb(mdl, "minmax", "export limit", "Function", "min", "Inputs", "2");
+    rowsF = {
+        [stg("@f_meas", 0), stg("f error", 2, {1, "Freq_ref"}), stg("fdbd"), stg(">df")]
+        [stg("@df", 0), stg("under-f"), stg("Dup"), stg(">dP_up")]
+        [stg("@df", 0), stg("over-f"), stg("Ddn"), stg(">dP_dn")]
+        [stg("@P_ref", 0), stg("P_ref + droop", 1, {2, "@dP_up"; 3, "@dP_dn"}), ...
+         stg("freq response?", 1, {2, "Frqflag"; 3, "@P_ref"}), stg("export limit", 1, {2, "Ppoc_max"}), ...
+         stg(">P_target")]};
+    [y, h2, r2] = ctrlSection(mdl, "Frequency response (Frqflag: Ddn, Dup) and export limit", rowsF, x, y, cm, ...
+        areaColor("controller"));
+
+    % P control at the POC (Pflag): PI on P_target - P_filt, target fed forward
+    nb(mdl, "sum", "Pmax - target", "Inputs", "+-");
+    nb(mdl, "sum", "Pmin - target", "Inputs", "+-");
+    lagBlk(mdl, "Tref", "par.Tref", "0");   % reference filter: target as the plant can follow it
+    nb(mdl, "sum", "P error", "Inputs", "+-");
+    kc(mdl, "Pflag", "par.Pflag");  kc(mdl, "no P loop", "0");
+    nb(mdl, "switch", "P loop on?", "Criteria", "u2 ~= 0");
+    kc(mdl, "frozen", "0");
+    nb(mdl, "switch", "freeze in dip", "Criteria", "u2 ~= 0");
+    nb(mdl, "sat", "femax femin", "UpperLimit", "par.femax", "LowerLimit", "par.femin");
+    piBlk(mdl, "Kpg Kig", "par.Kpg", "par.Kig", "");
+    nb(mdl, "sum", "target + PI", "Inputs", "++");
+    nb(mdl, "satdyn", "Pmax Pmin");
+    rowsP = {
+        [stg("@P_hi", 0), stg("Pmax - target", 1, {2, "@P_target"}), stg(">P_up_PI")]
+        [stg("@P_lo", 0), stg("Pmin - target", 1, {2, "@P_target"}), stg(">P_lo_PI")]
+        [stg("@P_target", 0), stg("Tref"), stg("P error", 1, {2, "@P_filt"}), stg("P loop on?", 1, {2, "Pflag"; 3, "no P loop"}), ...
+         stg("freeze in dip", 3, {1, "frozen"; 2, "@frz"}), stg("femax femin"), ...
+         stg("Kpg Kig", 1, {2, "@P_up_PI"; 3, "@P_lo_PI"}), stg(">P_PI")]
+        [stg("@P_target", 0), stg("target + PI", 1, {2, "@P_PI"}), stg("Pmax Pmin", 2, {1, "@P_hi"; 3, "@P_lo"}), ...
+         stg(">P_ord")]};
+    [y, h3, r3] = ctrlSection(mdl, "P control at the POC (Pflag)", rowsP, x, y, cm, areaColor("controller"));
+
+    % dispatch to the plants
+    body = [
+        "% P: wind and PV at available power, the BESS balances the rest within"
+        "% its charge / discharge limits; wind and PV are curtailed (in proportion"
+        "% to their availability) only when the BESS cannot absorb the surplus."
+        "% Q: Q_ref split by rating (open loop, stage 5 later)."
+        "P_ren = P_avail_wpp + P_avail_spp;"
+        "P_set_bess = min(max(P_ord - P_ren, -P_chg_max_bess), P_dis_max_bess);"
+        "P_r = min(max(P_ord - P_set_bess, 0), P_ren);"
+        "if P_ren > 1e-6"
+        "    w = P_avail_wpp / P_ren;"
+        "else"
+        "    w = par.qshare(1) / (par.qshare(1) + par.qshare(2));"
+        "end"
+        "P_set_wpp = P_r * w;"
+        "P_set_spp = P_r * (1 - w);"
+        "Q_set_wpp  = Q_ref * par.qshare(1);"
+        "Q_set_spp  = Q_ref * par.qshare(2);"
+        "Q_set_bess = Q_ref * par.qshare(3);"];
+    din = ["P_ord", "Q_ref", "P_avail_wpp", "P_avail_spp", "P_chg_max_bess", "P_dis_max_bess"];
+    addMatlabFunction(mdl + "/dispatch", "dispatch", din, outs, body, "par", [0 0 160 40*numel(din) + 20]);
+    rowsD = {[stg("@P_ord", 0), stg("dispatch", 1, {2, "@Q_ref"; 3, "@P_avail_wpp"; 4, "@P_avail_spp"; ...
+        5, "@P_chg_max_bess"; 6, "@P_dis_max_bess"}, {2, "Q_set_wpp"; 3, "P_set_spp"; 4, "Q_set_spp"; ...
+        5, "P_set_bess"; 6, "Q_set_bess"}), stg(">P_set_wpp")]};
+    x2 = max([r1 r2 r3]) + 80;   % second column of function areas
+    [y2, h4, r4] = ctrlSection(mdl, "Dispatch to the plants", rowsD, x2, 20, cm, areaColor("asset"));
+
+    % inputs not used yet (POC Q / V and plant measurements: later functions)
+    unused = ["Q_poc", "P_wpp", "Q_wpp", "P_spp", "Q_spp", "SOC_bess", "P_bess", "Q_bess"];
+    rowsU = cell(numel(unused), 1);
+    for k = 1:numel(unused)
+        nb(mdl, "term", unused(k) + " unused", "ShowName", "off");
+        rowsU{k} = [stg("@" + unused(k), 0), stg(unused(k) + " unused")];
+    end
+    [~, h5, r5] = ctrlSection(mdl, "Not used yet", rowsU, x2, y2, cm, areaColor("interface"));
+
+    hOut = ctrlOutputs(mdl, outs, "@" + outs, max([r1 r2 r3 r4 r5]) + 110, cm);
+    alignColumns(hIn, {[h1 h2 h3], [h4 h5]}, hOut);
     ctrlSave(mdl, folder);
 end
 

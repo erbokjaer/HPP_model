@@ -17,7 +17,7 @@ Or open `main.m`, pick a case set, cases, the network model (`network`) and Fast
 
 Always open the project first. It puts `params/`, `models/`, `scripts/` and `utilities/` on the path and sends Simulink cache files to `work/`. No script uses `cd` or `addpath`.
 
-The architecture, interfaces, typical values and the staged plan are in [docs/design.md](docs/design.md). **Status: stage 4 of 5** (structure, phasor network, IEC 61400-27-1 Type 4A wind turbine, WECC REEC_B/REEC_C + REGC_A for PV and BESS, closed-loop Q control in the assets, WECC REPC_A plant controllers with their own loops; the HPPC is still an open-loop placeholder).
+The architecture, interfaces, typical values and the staged plan are in [docs/design.md](docs/design.md). **Status: stage 5 of 5 started** (structure, phasor network, IEC 61400-27-1 Type 4A wind turbine, WECC REEC_B/REEC_C + REGC_A for PV and BESS, closed-loop Q control in the assets, WECC REPC_A plant controllers; the HPPC now closes the P loop at the POC and gives the frequency response of the plant (central control); its Q is still open loop).
 
 ## Model structure
 
@@ -62,7 +62,7 @@ Communication delays (`p.comm`, typical 20–200 ms) are discrete delays of whol
 
 | Folder | Contents |
 |---|---|
-| `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, network, communication) and then `deriveParameters` (controller parameters, per-instance asset arguments, network Z matrix). |
+| `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, network, communication, plant controllers, HPPC) and then `deriveParameters` (controller parameters, per-instance asset arguments, network Z matrix). |
 | `models/` | `HPP.slx`, plus `ctrl/` (7 controllers) and `assets/` (3 asset models). |
 | `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `checkModelBuild`, `networkCode`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. Results: `plotResults`, `summarizeResults`, `loadResults`, `caseLabels`, `dtuColors`. |
 | `scripts/+caseSets/` | Which variations to run: one file per case set. |
@@ -89,7 +89,7 @@ Controller parameters (`p.ctrl`, from `controllerParameters`):
 
 | Controller | Field | `Ts` | Per-unit base |
 |---|---|---|---|
-| HPPC | `p.ctrl.hppc` | 0.1 s | POC, `p.grid.Pbase` (180 MW) |
+| HPPC | `p.ctrl.hppc` (settings from `p.hppc`, `hppcParameters`) | 0.1 s | POC, `p.grid.Pbase` (180 MW) |
 | WPPC, SPPC, BESSC | `p.ctrl.wppc`, `.sppc`, `.bessc` | 20 ms | plant rating (150 / 50 / 30 MW) |
 | WT, PV, BESS asset controllers | `p.ctrl.wt`, `.pv`, `.bess` | 1 ms | unit rating `nAgg · Pn` (75 / 25 / 30 MW) |
 
@@ -107,7 +107,8 @@ A case set is a function in `scripts/+caseSets/` that returns a table. Each colu
 | `oat_Pref` | 8: Pref and BESS rating varied one at a time | `caseOAT` |
 | `grid_strength` | `SCR10` (default), `SCR5`, `SCR3` | `caseList` |
 | `wt_frt` | `no dip`, `dip 0.5`, `dip 0.8`, `dip 0.5 SCR3` (grid voltage dip at 30 s) | `caseList` |
-| `freq_step` | `no event`, `+0.2 Hz`, `-0.2 Hz`, `+0.2 Hz, no droop` (at 40 s) | `caseList` |
+| `freq_step` | `no event`, `+0.2 Hz`, `-0.2 Hz`, `+0.2 Hz, no droop`, `+0.2 Hz, decentral`, `-0.2 Hz, decentral` (at 40 s) | `caseList` |
+| `hppc_p` | `Pref 150 MW`, `step -30 MW`, `step +20 MW`, `step +40 MW (limit)`, `open loop`, `open loop, -30 MW` (P_ref step at 40 s) | `caseList` |
 | `bess_soc` | `SOC0 0.5`, `at SOCmin`, `at SOCmax` | `caseList` |
 
 To add a set, copy one of these files, rename it and edit it. Nothing else needs to change. Three helpers build the table:
@@ -192,9 +193,10 @@ This submits one job per case, each running `runCase(set, i)`. The script counts
 
 ## Status and next steps
 
-- Stages 1 (structure), 2 (network), 3 (IEC Type 4A wind turbine, fault-ride-through case set `wt_frt`) and 4 (WECC REEC_B / REEC_C + REGC_A for PV and BESS, closed-loop asset Q control, REPC_A plant controllers; case sets `bess_soc`, `freq_step`) are done. All controllers are block diagrams in `models/ctrl/`; parameter values (`p.wt.iec`, `p.pv.wecc`, `p.bess.wecc`, `p.pc`) are typical values to be checked against the standards. Each plant controller closes P, frequency and Q loops on its own busbar feeder, like a vendor plant controller. The HPPC is still open loop: losses between the busbar and the POC are not compensated (P_poc 146.5 MW for P_ref 150 MW; Q_poc −10.9 Mvar from the 33/132 kV transformer), and nothing at the POC coordinates the plants' frequency response. Next: stage 5, the HPPC functions (docs/design.md, section 8).
+- Stages 1 (structure), 2 (network), 3 (IEC Type 4A wind turbine, fault-ride-through case set `wt_frt`) and 4 (WECC REEC_B / REEC_C + REGC_A for PV and BESS, closed-loop asset Q control, REPC_A plant controllers; case sets `bess_soc`, `freq_step`) are done. All controllers are block diagrams in `models/ctrl/`; parameter values (`p.wt.iec`, `p.pv.wecc`, `p.bess.wecc`, `p.pc`, `p.hppc`) are typical values to be checked against the standards.
+- Stage 5 started: **central control** (default). The HPPC closes the P loop at the POC (PI with the target fed forward, a reference filter `Tref`, frozen during voltage dips) and gives the frequency response of the whole plant (5 % droop on 180 MW with ±20 mHz deadband); it dispatches wind and PV at available power and lets the BESS balance, curtailing wind and PV only when the BESS cannot absorb more. The plant controllers pass their P set-points on (`p.pc.<plant>.Frqflag` = 0: no local droop, no plant P loop); their Q loops stay closed. Nominal: P_poc 150.00 MW for P_ref 150 MW (146.5 MW open loop). The stage-4 setup (open-loop HPPC, droop in every plant controller) is kept as the `decentral` cases in `freq_step`. Q_poc is still −10.9 Mvar (HPPC Q open loop). Next: Q/V control at the POC, then dispatch and SOC management (docs/design.md, section 8).
 - Start-up is not initialised in steady state yet: during the first fraction of a second the controllers see zero measurements and the network sees no injection.
-- `SOCmin`, `SOCmax` and `p.ctrl.hppc.par.Ppoc_max` are defined but not used yet.
+- The HPPC does not use SOC yet (only the BESS controller limits at SOCmin / SOCmax); SOC management is a later stage-5 step.
 - The `"noBattery"` variant bug is fixed: derived parameters are now computed after the variant.
 - Later: code generation of every controller and IEEE/CIGRE DLLs for PSCAD. This needs Simulink Coder, Embedded Coder and a C compiler, which are not installed yet.
 

@@ -41,7 +41,9 @@ function r = repcDefaults()
     r.Qmin    = -0.5;
     r.Tfv     = 0.05;    % Q order lag (REPC_A lead-lag with Tft = 0)
     r.Tp      = 0.02;    % active power measurement filter
-    r.Frqflag = 1;       % 1: closed-loop P control and frequency response, 0: P_set passed on
+    r.Frqflag = 0;       % 1: closed-loop P control and frequency response (decentral),
+                         % 0: P_set passed on (central control: the HPPC closes the P loop
+                         %    at the POC and gives the frequency response, hppcParameters)
     r.Freq_ref = 1.0;    % frequency reference [pu]
     r.fdbd1   = -0.0004; % frequency deadband, lower [pu] (-20 mHz)
     r.fdbd2   = 0.0004;  % frequency deadband, upper [pu]
