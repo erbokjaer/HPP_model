@@ -316,6 +316,10 @@ function buildTSO(sys)
             add_block("simulink/Sources/Step", sys + "/" + names(j), "Time", "p.grid.Pstep.t0", ...
                 "Before", "p.grid.Pref", "After", "p.grid.Pref + p.grid.Pstep.dP", "SampleTime", "0", ...
                 "Position", [0 0 90 26]);
+        elseif names(j) == "Q_ref"   % reactive power reference with the optional step (p.grid.Qstep)
+            add_block("simulink/Sources/Step", sys + "/" + names(j), "Time", "p.grid.Qstep.t0", ...
+                "Before", "p.grid.Qref", "After", "p.grid.Qref + p.grid.Qstep.dQ", "SampleTime", "0", ...
+                "Position", [0 0 90 26]);
         else
             add_block("simulink/Sources/Constant", sys + "/" + names(j), "Value", vals(j), "Position", [0 0 90 26]);
         end
@@ -840,7 +844,7 @@ function buildHppcSub(sys)
 
     % group: inport name, port number, bus elements, HPPC port per element, link steps per element
     G = { ...
-      "TSO",       1, ["P_ref","Q_ref","f_meas"],             1:3,   {["gain:1/" + hb, "delay:p.comm.tso@p.grid.Pref/" + hb], ["gain:1/" + hb, "delay:p.comm.tso@0"], strings(1,0)}; ...
+      "TSO",       1, ["P_ref","Q_ref","f_meas"],             1:3,   {["gain:1/" + hb, "delay:p.comm.tso@p.grid.Pref/" + hb], ["gain:1/" + hb, "delay:p.comm.tso@p.grid.Qref/" + hb], strings(1,0)}; ...
       "POC meas",  2, ["P_poc","Q_poc","V_poc"],              4:6,   {meas, meas, ["memory", "delay:p.comm.meas_hppc@1"]}; ...
       "meas wpp",  3, ["P_avail","P","Q"],                    7:9,   {meas, meas, meas}; ...
       "meas spp",  4, ["P_avail","P","Q"],                    10:12, {meas, meas, meas}; ...
@@ -1819,8 +1823,9 @@ end
 %  HPPC template (stage 5): closed-loop P at the POC with the frequency
 %  response of the whole plant (central control), dispatch to the plants
 %  (wind and PV at available power, the BESS balances; wind and PV are
-%  curtailed only when the BESS cannot absorb the surplus). Q_ref is still
-%  split by rating, open loop. Ports (pu on p.ctrl.hppc.Pbase):
+%  curtailed only when the BESS cannot absorb the surplus), and Q or
+%  voltage control at the POC over the plants' own Q loops (Q order split
+%  by rating). Ports (pu on p.ctrl.hppc.Pbase):
 %    in   1 P_ref 2 Q_ref 3 f_meas 4 P_poc 5 Q_poc 6 V_poc
 %         7 P_avail_wpp 8 P_wpp 9 Q_wpp 10 P_avail_spp 11 P_spp 12 Q_spp
 %         13 P_chg_max_bess 14 P_dis_max_bess 15 SOC_bess 16 P_bess 17 Q_bess
@@ -1833,15 +1838,17 @@ function buildHppcCtrl(folder)
         "fed forward, Pflag) with the frequency response of the plant (droop Ddn / Dup with deadband, " + ...
         "Frqflag), limited to the available power and the POC export limit; dispatch: wind and PV at " + ...
         "available power, the BESS balances, wind and PV curtailed when the BESS is at its charge limit. " + ...
-        "Q_ref split by rating (open loop). Per unit on p.ctrl.hppc.Pbase. Parameters: model argument " + ...
+        "Q control (Q_ref, fed forward) or voltage control (Vref, droop Kc) at the POC with PI (Qflag, " + ...
+        "RefFlag), Q order split over the plants by rating. Both PIs frozen in a voltage dip. " + ...
+        "Per unit on p.ctrl.hppc.Pbase. Parameters: model argument " + ...
         "par (= p.ctrl.hppc.par, from p.hppc).", false);
     ins = ["P_ref", "Q_ref", "f_meas", "P_poc", "Q_poc", "V_poc", "P_avail_wpp", "P_wpp", "Q_wpp", ...
            "P_avail_spp", "P_spp", "Q_spp", "P_chg_max_bess", "P_dis_max_bess", "SOC_bess", "P_bess", "Q_bess"];
     outs = ["P_set_wpp", "Q_set_wpp", "P_set_spp", "Q_set_spp", "P_set_bess", "Q_set_bess"];
-    cm.ref  = ["P_ref", "Q_ref", "P_target", "P_ord", outs];
+    cm.ref  = ["P_ref", "Q_ref", "P_target", "P_ord", "Q_ff", "Q_ord", outs];
     cm.meas = ["f_meas", "P_poc", "Q_poc", "V_poc", "P_avail_wpp", "P_wpp", "Q_wpp", "P_avail_spp", ...
                "P_spp", "Q_spp", "P_chg_max_bess", "P_dis_max_bess", "SOC_bess", "P_bess", "Q_bess", ...
-               "P_filt", "P_hi", "P_lo"];
+               "P_filt", "Q_filt", "V_filt", "P_hi", "P_lo"];
     [hIn, x] = ctrlInputs(mdl, ins, repmat("1", 1, numel(ins)), cm);
 
     % measurements and plant P limits
@@ -1862,8 +1869,12 @@ function buildHppcCtrl(folder)
         "frz = double(V_poc < par.Vfrz || n > 0);"];
     addMatlabFunction(mdl + "/dip freeze", "dip_freeze", ["V_poc", "Ts"], "frz", body, "par", [0 0 120 70]);
     kc(mdl, "Ts", "Ts");
+    lagBlk(mdl, "Q filt", "par.Tq", "0");
+    lagBlk(mdl, "V filt", "par.Tq", "1");
     rowsM = {
         [stg("@P_poc", 0), stg("P filt"), stg(">P_filt")]
+        [stg("@Q_poc", 0), stg("Q filt"), stg(">Q_filt")]
+        [stg("@V_poc", 0), stg("V filt"), stg(">V_filt")]
         [stg("@V_poc", 0), stg("dip freeze", 1, {2, "Ts"}), stg(">frz")]
         [stg("@P_avail_wpp", 0), stg("available", 1, {2, "@P_avail_spp"; 3, "@P_dis_max_bess"}), stg(">P_hi")]
         [stg("@P_chg_max_bess", 0), stg("charge limit"), stg(">P_lo")]};
@@ -1916,12 +1927,48 @@ function buildHppcCtrl(folder)
          stg(">P_ord")]};
     [y, h3, r3] = ctrlSection(mdl, "P control at the POC (Pflag)", rowsP, x, y, cm, areaColor("controller"));
 
+    % Q / V control at the POC (Qflag, RefFlag): PI on the Q error (Q_ref
+    % filtered by TrefQ - Q_filt, Q_ref fed forward) or on the voltage error
+    % (Vref - V_filt - Kc Q_filt, no feed-forward), frozen in a dip
+    nb(mdl, "gain", "Kc", "Gain", "par.Kc");
+    nb(mdl, "sum", "V + Kc Q", "Inputs", "++");
+    kc(mdl, "Vref", "par.Vref");
+    nb(mdl, "sum", "V error", "Inputs", "+-");
+    kc(mdl, "RefFlag ff", "par.RefFlag");  kc(mdl, "no Q ff", "0");
+    nb(mdl, "switch", "Q feed-forward", "Criteria", "u2 ~= 0");
+    kc(mdl, "Qmax", "par.Qmax");  nb(mdl, "sum", "Qmax - ff", "Inputs", "+-");
+    kc(mdl, "Qmin", "par.Qmin");  nb(mdl, "sum", "Qmin - ff", "Inputs", "+-");
+    lagBlk(mdl, "TrefQ", "par.TrefQ", "0");
+    nb(mdl, "sum", "Q error", "Inputs", "+-");
+    kc(mdl, "RefFlag", "par.RefFlag");
+    nb(mdl, "switch", "V control?", "Criteria", "u2 ~= 0");
+    kc(mdl, "Qflag", "par.Qflag");  kc(mdl, "no Q loop", "0");
+    nb(mdl, "switch", "Q loop on?", "Criteria", "u2 ~= 0");
+    kc(mdl, "Q frozen", "0");
+    nb(mdl, "switch", "freeze Q in dip", "Criteria", "u2 ~= 0");
+    nb(mdl, "sat", "eqmax eqmin", "UpperLimit", "par.eqmax", "LowerLimit", "par.eqmin");
+    piBlk(mdl, "Q PI", "par.Kpq + par.RefFlag*(par.KpV - par.Kpq)", "par.Kiq + par.RefFlag*(par.KiV - par.Kiq)", "");
+    nb(mdl, "sum", "ff + Q PI", "Inputs", "++");
+    nb(mdl, "sat", "Qmax Qmin", "UpperLimit", "par.Qmax", "LowerLimit", "par.Qmin");
+    rowsQ = {
+        [stg("@Q_filt", 0), stg("Kc"), stg(">KcQ")]
+        [stg("@V_filt", 0), stg("V + Kc Q", 1, {2, "@KcQ"}), stg("V error", 2, {1, "Vref"}), stg(">V_err")]
+        [stg("@Q_ref", 0), stg("Q feed-forward", 3, {1, "no Q ff"; 2, "RefFlag ff"}), stg(">Q_ff")]
+        [stg("Qmax", 0), stg("Qmax - ff", 1, {2, "@Q_ff"}), stg(">Q_up_PI")]
+        [stg("Qmin", 0), stg("Qmin - ff", 1, {2, "@Q_ff"}), stg(">Q_lo_PI")]
+        [stg("@Q_ref", 0), stg("TrefQ"), stg("Q error", 1, {2, "@Q_filt"}), stg("V control?", 3, {1, "@V_err"; 2, "RefFlag"}), ...
+         stg("Q loop on?", 1, {2, "Qflag"; 3, "no Q loop"}), stg("freeze Q in dip", 3, {1, "Q frozen"; 2, "@frz"}), ...
+         stg("eqmax eqmin"), stg("Q PI", 1, {2, "@Q_up_PI"; 3, "@Q_lo_PI"}), stg(">Q_PI")]
+        [stg("@Q_ff", 0), stg("ff + Q PI", 1, {2, "@Q_PI"}), stg("Qmax Qmin"), stg(">Q_ord")]};
+    x2 = max([r1 r2 r3]) + 80;   % second column of function areas
+    [y2, h6, r6] = ctrlSection(mdl, "Q or V control at the POC (Qflag, RefFlag)", rowsQ, x2, 20, cm, areaColor("controller"));
+
     % dispatch to the plants
     body = [
         "% P: wind and PV at available power, the BESS balances the rest within"
         "% its charge / discharge limits; wind and PV are curtailed (in proportion"
         "% to their availability) only when the BESS cannot absorb the surplus."
-        "% Q: Q_ref split by rating (open loop, stage 5 later)."
+        "% Q: the HPPC's Q order split over the plants by rating."
         "P_ren = P_avail_wpp + P_avail_spp;"
         "P_set_bess = min(max(P_ord - P_ren, -P_chg_max_bess), P_dis_max_bess);"
         "P_r = min(max(P_ord - P_set_bess, 0), P_ren);"
@@ -1932,19 +1979,18 @@ function buildHppcCtrl(folder)
         "end"
         "P_set_wpp = P_r * w;"
         "P_set_spp = P_r * (1 - w);"
-        "Q_set_wpp  = Q_ref * par.qshare(1);"
-        "Q_set_spp  = Q_ref * par.qshare(2);"
-        "Q_set_bess = Q_ref * par.qshare(3);"];
-    din = ["P_ord", "Q_ref", "P_avail_wpp", "P_avail_spp", "P_chg_max_bess", "P_dis_max_bess"];
+        "Q_set_wpp  = Q_ord * par.qshare(1);"
+        "Q_set_spp  = Q_ord * par.qshare(2);"
+        "Q_set_bess = Q_ord * par.qshare(3);"];
+    din = ["P_ord", "Q_ord", "P_avail_wpp", "P_avail_spp", "P_chg_max_bess", "P_dis_max_bess"];
     addMatlabFunction(mdl + "/dispatch", "dispatch", din, outs, body, "par", [0 0 160 40*numel(din) + 20]);
-    rowsD = {[stg("@P_ord", 0), stg("dispatch", 1, {2, "@Q_ref"; 3, "@P_avail_wpp"; 4, "@P_avail_spp"; ...
+    rowsD = {[stg("@P_ord", 0), stg("dispatch", 1, {2, "@Q_ord"; 3, "@P_avail_wpp"; 4, "@P_avail_spp"; ...
         5, "@P_chg_max_bess"; 6, "@P_dis_max_bess"}, {2, "Q_set_wpp"; 3, "P_set_spp"; 4, "Q_set_spp"; ...
         5, "P_set_bess"; 6, "Q_set_bess"}), stg(">P_set_wpp")]};
-    x2 = max([r1 r2 r3]) + 80;   % second column of function areas
-    [y2, h4, r4] = ctrlSection(mdl, "Dispatch to the plants", rowsD, x2, 20, cm, areaColor("asset"));
+    [y2, h4, r4] = ctrlSection(mdl, "Dispatch to the plants", rowsD, x2, y2, cm, areaColor("asset"));
 
-    % inputs not used yet (POC Q / V and plant measurements: later functions)
-    unused = ["Q_poc", "P_wpp", "Q_wpp", "P_spp", "Q_spp", "SOC_bess", "P_bess", "Q_bess"];
+    % inputs not used yet (plant measurements and SOC: later functions)
+    unused = ["P_wpp", "Q_wpp", "P_spp", "Q_spp", "SOC_bess", "P_bess", "Q_bess"];
     rowsU = cell(numel(unused), 1);
     for k = 1:numel(unused)
         nb(mdl, "term", unused(k) + " unused", "ShowName", "off");
@@ -1952,8 +1998,8 @@ function buildHppcCtrl(folder)
     end
     [~, h5, r5] = ctrlSection(mdl, "Not used yet", rowsU, x2, y2, cm, areaColor("interface"));
 
-    hOut = ctrlOutputs(mdl, outs, "@" + outs, max([r1 r2 r3 r4 r5]) + 110, cm);
-    alignColumns(hIn, {[h1 h2 h3], [h4 h5]}, hOut);
+    hOut = ctrlOutputs(mdl, outs, "@" + outs, max([r1 r2 r3 r4 r5 r6]) + 110, cm);
+    alignColumns(hIn, {[h1 h2 h3], [h6 h4 h5]}, hOut);
     ctrlSave(mdl, folder);
 end
 

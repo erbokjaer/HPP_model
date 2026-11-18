@@ -17,7 +17,7 @@ Or open `main.m`, pick a case set, cases, the network model (`network`) and Fast
 
 Always open the project first. It puts `params/`, `models/`, `scripts/` and `utilities/` on the path and sends Simulink cache files to `work/`. No script uses `cd` or `addpath`.
 
-The architecture, interfaces, typical values and the staged plan are in [docs/design.md](docs/design.md). **Status: stage 5 of 5 started** (structure, phasor network, IEC 61400-27-1 Type 4A wind turbine, WECC REEC_B/REEC_C + REGC_A for PV and BESS, closed-loop Q control in the assets, WECC REPC_A plant controllers; the HPPC now closes the P loop at the POC and gives the frequency response of the plant (central control); its Q is still open loop).
+The architecture, interfaces, typical values and the staged plan are in [docs/design.md](docs/design.md). **Status: stage 5 of 5 started** (structure, phasor network, IEC 61400-27-1 Type 4A wind turbine, WECC REEC_B/REEC_C + REGC_A for PV and BESS, closed-loop Q control in the assets, WECC REPC_A plant controllers; the HPPC now closes the P loop at the POC with the frequency response of the plant (central control) and a Q or voltage loop at the POC).
 
 ## Model structure
 
@@ -108,6 +108,7 @@ A case set is a function in `scripts/+caseSets/` that returns a table. Each colu
 | `grid_strength` | `SCR10` (default), `SCR5`, `SCR3` | `caseList` |
 | `wt_frt` | `no dip`, `dip 0.5`, `dip 0.8`, `dip 0.5 SCR3` (grid voltage dip at 30 s) | `caseList` |
 | `freq_step` | `no event`, `+0.2 Hz`, `-0.2 Hz`, `+0.2 Hz, no droop`, `+0.2 Hz, decentral`, `-0.2 Hz, decentral` (at 40 s) | `caseList` |
+| `hppc_qv` | `Q 0`, `Q step +30 Mvar`, `Q step -30 Mvar`, `Q open loop`, `V ctrl, grid -2 %`, `V ctrl, grid -2 %, SCR3`, `Q ctrl, grid -2 %`, `V ctrl, Vref 1.01` (Q_ref step / grid voltage drop at 40 s) | `caseList` |
 | `hppc_p` | `Pref 150 MW`, `step -30 MW`, `step +20 MW`, `step +40 MW (limit)`, `open loop`, `open loop, -30 MW` (P_ref step at 40 s) | `caseList` |
 | `bess_soc` | `SOC0 0.5`, `at SOCmin`, `at SOCmax` | `caseList` |
 
@@ -196,7 +197,8 @@ This submits one job per case, each running `runCase(set, i)`. The script counts
 ## Status and next steps
 
 - Stages 1 (structure), 2 (network), 3 (IEC Type 4A wind turbine, fault-ride-through case set `wt_frt`) and 4 (WECC REEC_B / REEC_C + REGC_A for PV and BESS, closed-loop asset Q control, REPC_A plant controllers; case sets `bess_soc`, `freq_step`) are done. All controllers are block diagrams in `models/ctrl/`; parameter values (`p.wt.iec`, `p.pv.wecc`, `p.bess.wecc`, `p.pc`, `p.hppc`) are typical values to be checked against the standards.
-- Stage 5 started: **central control** (default). The HPPC closes the P loop at the POC (PI with the target fed forward, a reference filter `Tref`, frozen during voltage dips) and gives the frequency response of the whole plant (5 % droop on 180 MW with ±20 mHz deadband); it dispatches wind and PV at available power and lets the BESS balance, curtailing wind and PV only when the BESS cannot absorb more. The plant controllers pass their P set-points on (`p.pc.<plant>.Frqflag` = 0: no local droop, no plant P loop); their Q loops stay closed. Nominal: P_poc 150.00 MW for P_ref 150 MW (146.5 MW open loop). The stage-4 setup (open-loop HPPC, droop in every plant controller) is kept as the `decentral` cases in `freq_step`. Q_poc is still −10.9 Mvar (HPPC Q open loop). Next: Q/V control at the POC, then dispatch and SOC management (docs/design.md, section 8).
+- Stage 5 started: **central control** (default). The HPPC closes the P loop at the POC (PI with the target fed forward, a reference filter `Tref`, frozen during voltage dips) and gives the frequency response of the whole plant (5 % droop on 180 MW with ±20 mHz deadband); it dispatches wind and PV at available power and lets the BESS balance, curtailing wind and PV only when the BESS cannot absorb more. The plant controllers pass their P set-points on (`p.pc.<plant>.Frqflag` = 0: no local droop, no plant P loop); their Q loops stay closed. Nominal: P_poc 150.00 MW for P_ref 150 MW (146.5 MW open loop). The stage-4 setup (open-loop HPPC, droop in every plant controller) is kept as the `decentral` cases in `freq_step`.
+- Stage 5, Q / V: the HPPC closes a Q loop at the POC (default, tracks the TSO Q_ref: Q_poc 0.00 Mvar instead of −11.4 Mvar open loop) or a voltage loop (`p.hppc.RefFlag` = 1, `Vref`, droop `Kc`), over the plants' own Q loops, and splits its Q order over the plants by rating; limits ±0.33 pu (60 Mvar), frozen in a dip like the P loop. Q_ref steps of ±30 Mvar settle in 0.8–0.9 s; their 6–9 Mvar overshoot comes mostly from the plant and asset Q loops (4.7 Mvar with the HPPC loop open). V control after a 2 % grid voltage drop: back at 1.000 pu in 2.9 s (SCR 10) / 1.0 s (SCR 3). Next: P_ref ramp limits, dispatch with SOC management (docs/design.md, section 8).
 - Start-up is not initialised in steady state yet: during the first fraction of a second the controllers see zero measurements and the network sees no injection.
 - The HPPC does not use SOC yet (only the BESS controller limits at SOCmin / SOCmax); SOC management is a later stage-5 step.
 - The `"noBattery"` variant bug is fixed: derived parameters are now computed after the variant.

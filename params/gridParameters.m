@@ -12,6 +12,12 @@ function grid = gridParameters()
     grid.Pstep.t0 = 40;      % [s]  time of the step
     grid.Pstep.dP = 0;       % [W]  change of Pref
 
+    % TSO reactive power reference (+ = export) with an optional step.
+    % Case set hppc_qv.
+    grid.Qref     = 0;       % [var]
+    grid.Qstep.t0 = 40;      % [s]
+    grid.Qstep.dQ = 0;       % [var] change of Qref
+
     % Grid Thevenin equivalent at the POC
     grid.Vpoc = 132e3;       % [V]  nominal POC voltage
     grid.SCR  = 10;          % [-]  short-circuit ratio, Ssc / Pmax_poc
