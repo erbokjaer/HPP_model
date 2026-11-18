@@ -84,7 +84,7 @@ Signs: generator convention, + P = export / discharge, + Q = export (capacitive)
 | `P_chg_max_bess`, `P_dis_max_bess`, `SOC_bess` | pu, – | | |
 | `P_wpp`, `Q_wpp`, `P_spp`, `Q_spp`, `P_bess`, `Q_bess` | pu | | |
 
-Functions, stage 5: P control at POC with ramp limits, Q / V / PF control at POC, frequency response (FSM / LFSM-O/U), dispatch between plants, POC limits. Built so far (section 8, stage 5): closed-loop P with frequency response and export limit, P dispatch, Q or V control (PF control not yet; V_ref is a parameter, `p.hppc.Vref`, not a TSO signal yet). `f_meas` is measured locally (no communication delay).
+Functions, stage 5: P control at POC with ramp limits, Q / V / PF control at POC, frequency response (FSM / LFSM-O/U), dispatch between plants, POC limits. Built so far (section 8, stage 5): set-point ramp limit, LFSM-O / LFSM-U / FSM, export limit, closed-loop P, SOC-aware P dispatch, Q / voltage (slope) / power factor control, after Energinet's DK1 requirements (V_ref and PF are parameters, `p.hppc.Vref` / `PF`, not TSO signals yet). `f_meas` is measured locally (no communication delay).
 
 ### 4.2 Plant controllers  (base: plant rating; vectors of width N)
 
@@ -166,7 +166,8 @@ p.grid           POC, base, grid SCR, X/R, frequency
 p.net            transformers (incl. magnetizing branch), cables, lengths per feeder; solverType = default network model
 p.comm           communication delays
 p.wt  / p.pv / p.bess   nFeeders, nPerFeeder, nAgg, Pn (N, Prated derived), asset-model parameters
-p.hppc           HPPC settings (P: Pflag, Frqflag, PI, Tref, Vfrz / Thld, droop; Q / V: Qflag, RefFlag, Vref, Kc, PI), copied into p.ctrl.hppc.par
+p.hppc           HPPC settings (P: Pflag, PI, Tref, Vfrz / Thld, ramp limit; frequency: Frqflag, LFSM-O / LFSM-U, FSM; SOCband;
+                 Q / V / PF: Qflag, RefFlag, Vref, Vslope, PF, PI, SCRset), copied into p.ctrl.hppc.par
 p.pc             plant controller (REPC_A) settings, copied into p.ctrl.wppc / sppc / bessc .par
 p.ctrl.hppc      Ts, Pbase, par
 p.ctrl.wppc / sppc / bessc      Ts, Pbase, par
@@ -195,14 +196,14 @@ Each stage ends with a regression check against the previous stage, as for the p
 5. **HPPC functions. In progress.** P and Q/V control at the POC, frequency response, dispatch, ramp limits, SOC management.
    **Central control (decided 2026-11-17, step 1 done).** The HPPC closes the P loop at the POC and gives the frequency response of the whole plant; the plant controllers do not respond to frequency themselves and pass their P set-points on (`p.pc.<plant>.Frqflag` = 0, which in REPC_A also opens the plant P loop). Their Q / V loops stay closed. This replaces the stage-4 default for P and frequency; the stage-4 setup stays available as the `decentral` cases (`hppc.Pflag` = 0, `hppc.Frqflag` = 0, plant `Frqflag` = 1).
    `HPPC.slx` (template `buildHppcCtrl` in `buildHPP.m`, parameters `p.hppc` in `params/hppcParameters.m`), per unit on 180 MW, 0.1 s:
-   - *Frequency response* (`Frqflag`): P_target = P_ref + droop, with REPC_A-style droop on the POC base (`Ddn` / `Dup` = 20, i.e. 5 %; deadband `fdbd` ±20 mHz), then the export limit `Ppoc_max`. Under-frequency headroom comes from the BESS (wind and PV run at available power).
+   - *Frequency response* (`Frqflag`): P_target = P_ref + droop, with REPC_A-style droop on the POC base (`Ddn` / `Dup` = 20, i.e. 5 %; deadband `fdbd` ±20 mHz), then the export limit `Ppoc_max`. Under-frequency headroom comes from the BESS (wind and PV run at available power). (Replaced in step 3 by LFSM-O / LFSM-U and optional FSM after the grid code.)
    - *P control* (`Pflag`): P_ord = P_target + PI(P_target filtered by `Tref` − P_poc filtered by `Tp`), PI `Kpg` 0.1, `Kig` 0.5 /s with clamping anti-windup, error limits `femax` / `femin`, output limits from the plants' availability (P_avail_wpp + P_avail_spp + P_dis_max_bess, and −P_chg_max_bess). The reference filter `Tref` (0.4 s) keeps the PI from integrating the response time of a step (measurement filter, delays, plant lags): with it the +20 MW step overshoots 0.8 MW instead of 3 MW. The PI is frozen while V_poc < `Vfrz` (0.9) and for `Thld` (1 s) after it; without the freeze the PI wound up during a dip (P_poc overshoot 3–13 MW, recovery 2–4 s instead of 0.1–0.5 s).
    - *Dispatch:* wind and PV at available power, the BESS balances (P_ord − available renewable power, within its charge / discharge limits); wind and PV are curtailed in proportion to availability only when the BESS cannot absorb the surplus. Q_ref is still split by rating (open loop). The POC Q / V and plant P / Q measurements and SOC are inputs but not used yet.
    - The TSO P_ref can step (`p.grid.Pstep`: time, change); new case set `hppc_p`.
    Checks (default layout, nodal network, Fast Restart):
    - Nominal: P_poc 150.00 MW for P_ref 150 MW (146.52 MW open loop); the BESS covers the losses (−1.51 instead of −5.01 MW). Before the wind step (t < 20 s) the plant cannot reach 150 MW: P_poc 137.8 MW with the BESS at its discharge limit.
    - `hppc_p`, P_ref steps at 40 s: −30 MW → 120.00 MW (BESS at its charge limit −30.3 MW, wind curtailed 132.1 → 131.0 MW; undershoot 1.6 MW, within 1 % after 1.0 s); +20 MW → 170.00 MW (overshoot 0.8 MW, 0.5 s); +40 MW → export limit 180.00 MW (0.5 s). Open loop: 146.52 → 116.52 MW.
-   - `freq_step`: ±0.2 Hz → P_poc −12.96 / +12.96 MW (5 % × 0.18 Hz × 180 MW, symmetric because the BESS gives the under-frequency response; it absorbs the over-frequency response instead of curtailing wind), within 5 % after 0.3–0.7 s. Decentral (stage 4): −13.55 / +2.15 MW (only the BESS can respond to under-frequency, and only on its own 30 MW base), 1.4–2.0 s, P_poc offset by the uncompensated losses.
+   - `freq_step` (step-1 droop, since replaced): ±0.2 Hz → P_poc −12.96 / +12.96 MW (5 % × 0.18 Hz × 180 MW, symmetric because the BESS gives the under-frequency response; it absorbs the over-frequency response instead of curtailing wind), within 5 % after 0.3–0.7 s. Decentral (stage 4): −13.55 / +2.15 MW (only the BESS can respond to under-frequency, and only on its own 30 MW base), 1.4–2.0 s, P_poc offset by the uncompensated losses.
    - `wt_frt`: P_poc back at 150 MW 0.10 s (dip 0.5), 0.46 s (dip 0.8) and 0.45 s (dip 0.5, SCR 3) after clearing, no overshoot (max 150.2 MW apart from the known one-step spike at clearing).
    - `grid_strength` and `bess_soc`: P_poc 150.00 MW in all cases (at SOCmin before the wind step 108 MW: no BESS discharge).
    **Q / V control at the POC (step 2 done, 2026-11-18).** Same HPPC, parameters in `p.hppc`; the plant controllers keep their own Q loops (REPC_A `RefFlag` = 0, tracking their Q set-point at the busbar feeder), so the HPPC is an outer loop over them.
@@ -210,8 +211,36 @@ Each stage ends with a regression check against the previous stage, as for the p
    - The TSO Q_ref can step (`p.grid.Qref`, `p.grid.Qstep`); a sustained grid voltage change uses `p.grid.dip` with a long duration. New case set `hppc_qv`.
    Checks (default layout, nodal network):
    - Q control: Q_poc 0.00 Mvar for Q_ref 0 (−11.39 Mvar open loop, the 33/132 kV transformer and grid side); V_poc 1.0048 instead of 0.9985. Q_ref ±30 Mvar at 40 s: ±30.00 Mvar, within 5 % after 0.8–0.9 s, overshoot 5.8 / 8.8 Mvar. Most of the overshoot is from the plant and asset Q loops (feed-forward plus PI at two levels): the same step with the HPPC loop open overshoots 4.7 Mvar. A longer `TrefQ` (0.8 s) or a smaller `Kiq` hardly changes it.
-   - Voltage control, grid source −2 % at 40 s: V_poc back at 1.0000 pu, Q_poc −8.7 → +27.3 Mvar at SCR 10 (2.9 s, no overshoot) and 6.0 → 17.0 Mvar at SCR 3 (1.0 s, 2 Mvar overshoot). The loop gain is dV/dQ ≈ 1/SCR, so one setting is a compromise: `KiV` 5 took 6 s at SCR 10, `KiV` 20 oscillated at SCR 3 (10 Mvar overshoot, 3.6 s). Q control in the same event keeps Q_poc at 0 and V_poc drops to 0.985. `Vref` 1.01: Q_poc 9.4 Mvar.
+   - Voltage control, grid source −2 % at 40 s: V_poc back at 1.0000 pu, Q_poc −8.7 → +27.3 Mvar at SCR 10 (2.9 s, no overshoot) and 6.0 → 17.0 Mvar at SCR 3 (1.0 s, 2 Mvar overshoot). The loop gain is dV/dQ ≈ 1/SCR, so one setting is a compromise: `KiV` 5 took 6 s at SCR 10, `KiV` 20 oscillated at SCR 3 (10 Mvar overshoot, 3.6 s). (Replaced in step 3: slope and normalised gains.) Q control in the same event keeps Q_poc at 0 and V_poc drops to 0.985. `Vref` 1.01: Q_poc 9.4 Mvar.
    - P loop unchanged (`hppc_p`, `freq_step`: same P results; open loop now 146.56 MW because Q_poc = 0 changes the losses). `wt_frt`: P_poc back within 1 % 0.13 s (dip 0.5), 0.52 s (dip 0.8), 0.29 s (dip 0.5 SCR 3) after clearing, max 150.2 MW.
+
+   **Grid code: ramp limit, LFSM / FSM, PF control, SOC-aware dispatch (step 3 done, 2026-11-18).** The HPPC functions follow Energinet's requirements for DK1, from the Danish RfG requirements (*Krav jf. RfG, bilag 1*, power park modules type D; the copy used is rev. 2 of 22-07-2022, marked historic, so check against the current revision) and Technical Regulation 3.3.1 for energy storage facilities (rev. 6). Pn = 180 MW (POC base).
+
+   | Requirement (DK1) | Source | Model (`p.hppc`) |
+   |---|---|---|
+   | Ramp rate constraint up and down, 1–20 % Pn/min, at most 60 MW/min (PPM) or 1 MW/s (storage); maximum by default; not for frequency response | RfG 15(6)(e); TR 3.3.1 §32 | `rampUp` / `rampDn` 0.20 pu/min = 36 MW/min, on the set-point and availability changes; frequency response added after it |
+   | Priority: protection, synthetic inertia, frequency control, power constraint, power gradient constraint | RfG 14(5)(c); TR 3.3.1 §26 | frequency response after the ramp limiter, before the export limit |
+   | LFSM-O: threshold 50.2–50.5 Hz (DK1 50.2), droop 2–12 % (DK1 5 %), start ≤ 2 s, full ≤ 30 s, prevails over other set-points | RfG 13(2); TR 3.3.1 §23 | `fO` 50.2 Hz, `sO` 5 %, always on |
+   | LFSM-U: threshold 49.5–49.8 Hz (DK1 49.8), droop 2–12 % (DK1 5 %), up to maximum capacity | RfG 15(2)(c); TR 3.3.1 §52 | `fU` 49.8 Hz, `sU` 5 %, always on (headroom from the BESS) |
+   | FSM: droop 2–12 %, deadband 0–500 mHz, insensitivity ≤ 10 mHz, range ≥ 1.5–10 % Pn, full activation ≤ 30 s | RfG 15(2)(d); TR 3.3.1 §53 | `FSMflag` (off unless delivering FCR), `sFSM` 5 %, `fsmDb` 10 mHz, `fsmRange` 10 %; the BESS keeps `fsmRange` as upward reserve |
+   | Voltage control: set-point 0.95–1.05 pu, slope 2–7 %, 90 % of the Q change within t1 = 1 s, settled within t2 = 5 s (5 % of Qmax) | RfG 21(3)(d)(ii–iv) | `RefFlag` 1, `Vref`, `Vslope` 4 % |
+   | Q, voltage and PF control modes; PF: start ≤ 2 s, complete ≤ 30 s | RfG 21(3)(d)(i, vi) | `RefFlag` 0 / 1 / 2, `PF`, `PFsign` |
+   | P set-point accuracy 2 % Pn over 1 min | RfG 15(2)(a) | closed P loop at the POC |
+
+   Changes in `HPPC.slx` (template `buildHppcCtrl`):
+   - *Ramp limiter* (MATLAB Function, state starts at the set-point): P_base follows min(P_ref, P_avail − FSM reserve) at `rampUp` / `rampDn`. Availability rises (the wind step at 20 s) are therefore ramp-limited too; the BESS absorbs the renewable surplus meanwhile, and covers a fast drop of availability up to its limits.
+   - *Frequency response* (MATLAB Function): LFSM-O − max(f − fO, 0)/sO, LFSM-U + max(fU − f, 0)/sU, and with `FSMflag` the FSM droop with deadband, limited to ±`fsmRange`. This replaces the step-1 symmetric droop with ±20 mHz deadband, which was effectively FSM. `Frqflag` 0 switches all of it off (decentral cases).
+   - *SOC-aware BESS limits:* discharge (charge) derated linearly to zero over `SOCband` (0.1) above SOCmin (below SOCmax); wind and PV are curtailed when the BESS cannot absorb more. The dispatch uses these limits.
+   - *Voltage control with slope:* PI on Vref − V − (`Vslope`/`Qmax`)·Q, so in steady state Q = (Vref − V)/`Vslope` · Qmax. The PI gains are normalised by the loop gain (`Vslope`/`Qmax` + dV/dQ), dV/dQ = 1/`SCRset` (the grid strength set at commissioning; default the actual `p.grid.SCR`): `KpV` 0.5, `KiV` 2.5 /s.
+   - *PF control* (`RefFlag` 2): Q reference P_poc · `PFsign` · tan(acos(`PF`)), then the Q loop.
+   - `runSweep` with Fast Restart no longer refuses `sim.Tstop` (it matched `sim.Ts` as a prefix).
+   Checks (default layout, nodal network):
+   - `freq_step`: +0.2 Hz (at the LFSM-O threshold) → no response; +0.5 Hz LFSM-O → −21.60 MW (12 % of Pn = 0.3 Hz / 50 Hz / 5 %); −0.5 Hz LFSM-U → +21.60 MW (BESS); FSM ±0.2 Hz → ∓13.68 MW (7.6 %); FSM + LFSM-O at +0.5 Hz → −39.6 MW (10 % + 12 %; BESS at its charge limit, wind curtailed). Start 0.1 s, 90 % after 0.3 s (requirement: ≤ 2 s, ≤ 30 s).
+   - `hppc_p` (120 s): P_ref −30 / +20 / +40 MW at 40 s reached after 48 / 31 / 47 s (1 % band; 36 MW/min); 10 %/min: 18 MW/min. Largest change over any 60 s window: 36.46 MW (limit 36) and 18.04 MW (limit 18): the 0.5 MW excess is the PI taking up the losses after the wind step, within the 2 % Pn (3.6 MW) accuracy. Without the ramp limit: 1 s.
+   - `bess_soc`: SOC0 0.15 → BESS discharge derated to 14.6 MW (29.7 at SOC 0.5); at SOCmin 0 MW; SOC0 0.15 with +20 MW: BESS 13.5 MW, P_poc 165.0 instead of 170 MW; near SOCmax charging −0.8 MW and wind / PV curtailed, P_poc 150 MW.
+   - `hppc_qv`, voltage control after a 2 % grid voltage drop: Q follows the slope (4 %: 12.3 Mvar at V 0.9917); t90 0.49–0.59 s, settled within 5 % of Qmax after 0.34–0.52 s for slopes 2 % and 7 % at SCR 10 and 3 (t1 = 1 s, t2 = 5 s met). With `SCRset` 10 on an SCR 3 grid: t90 0.31 s, 50–90 % overshoot, settled after 0.8–1.5 s; with `SCRset` 3 on an SCR 10 grid: t90 1.4–2.1 s, which misses t1. PF 0.95: 0.953 export (47.7 Mvar), 0.950 import (−49.3 Mvar). Q steps unchanged.
+   - `wt_frt`: P_poc relative to the no-dip case back within 1.5 MW 0.13 / 0.51 / 0.29 s after clearing, no overshoot.
+   - Not modelled: the island-detection delay of 500 ms (distribution-connected storage only), synthetic inertia, FRT current requirements at the POC (asset level only), the U-Q/Pmax profile and Q capability per P, the LFSM-O behaviour at minimum regulating level.
 
 Afterwards: code generation of every controller (needs the Coder products and a compiler), the IEEE/CIGRE wrapper, and PSCAD validation.
 
@@ -219,12 +248,12 @@ Afterwards: code generation of every controller (needs the Coder products and a 
 
 - **Plant sizes:** 150 MW wind (30 × 5 MW turbines since stage 4b, 10 kV collector), 50 MW PV (10 × 5 MW stations), 30 MW / 60 MWh BESS, 180 MW POC export limit.
 - **POC voltage:** 132 kV.
-- **Grid code:** Energinet TF 3.3.1 as the reference for HPPC functions (FSM, LFSM-O/U, Q / U control), but strict compliance is not a goal for now.
+- **Grid code:** Energinet's DK1 requirements (Danish RfG requirements for power park modules type D; Technical Regulation 3.3.1 for the BESS). Since 2026-11-18 the HPPC functions follow them (section 8, stage 5 step 3); compliance is checked in simulation only.
 - **Wind model:** IEC 61400-27-1 **Type 4A** (no drive-train model) for now.
 - **Per-instance parameters:** not planned, but kept possible. Every asset instance k already gets its own `p.<type>.ap(k)`, including its controller's `par`, so different turbine types in one plant only need different values in `ap(k)`; the model does not change.
 
 ## 10. Open points
-- **Stage 5, HPPC functions** (section 8): done: closed-loop P and frequency response at the POC (central control), P dispatch, Q or V control at the POC. Next: PF control and V_ref from the TSO, Q dispatch by available Q capability instead of rating, ramp limits on P_ref, dispatch with SOC management, LFSM-O/U and FSM details after Energinet TF 3.3.1. Open question: how the central HPPC loops interact with plant controllers that keep their own P and frequency loops (decentral) — the coordination the research addresses.
+- **Stage 5, HPPC functions** (section 8): done: closed-loop P and frequency response at the POC (central control), P dispatch, Q or V control at the POC. Done since: ramp limits, LFSM-O / LFSM-U / FSM and PF control after the Danish grid code, SOC-aware dispatch (step 3). Next: V_ref and PF from the TSO, Q dispatch by available Q capability instead of rating, the U-Q/Pmax profile, SOC restoration (towards a target SOC), the ramp-limit overshoot after availability steps (0.5 MW), checking the requirements against the current RfG revision. Open question: how the central HPPC loops interact with plant controllers that keep their own P and frequency loops (decentral) — the coordination the research addresses.
 - **WPPC:** uses the WECC REPC_A structure; the IEC 61400-27-1 WPP control model is a later refinement.
 - **Checks against the standard texts:** IEC Type 4A block details (filter forms, dip logic with hysteresis / post-fault hold, `Kqv` reference, current-limit options, `uqdip` / `Mqfrt` modes) and the WECC simplifications listed in stage 4 (VDL1/VDL2, state freeze and `Thld` during a dip, Pflag, high-voltage reactive current management, `Tfltr` in REGC_A, rate limits on the state). All parameter values are typical, not from a specific turbine or inverter.
 - **Spike at fault clearing:** the network with one-step-delayed current sources gives a single-step spike when a dip clears (Q_poc ≈ 125 Mvar for one step). A smaller step or a filter on the network voltage would remove it.

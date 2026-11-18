@@ -87,9 +87,11 @@ function checkTunable(cases, setName)
     % Fast Restart keeps the compiled model: values that are fixed at
     % compile time (layout, time step, communication delays, network model)
     % would silently keep their first value. Refuse case sets that change them.
-    fixed = ["net.solverType", "sim.Ts", "comm.", ".nFeeders", ".nPerFeeder", ".N"];
+    exact  = ["net.solverType", "sim.Ts"];
+    prefix = "comm.";
+    suffix = [".nFeeders", ".nPerFeeder", ".N"];
     cols = string(cases.Properties.VariableNames);
-    bad = cols(arrayfun(@(c) any(startsWith(c, fixed) | endsWith(c, fixed)), cols));
+    bad = cols(arrayfun(@(c) any(c == exact) || startsWith(c, prefix) || any(endsWith(c, suffix)), cols));
     if ~isempty(bad)
         error("runSweep:notTunable", "Case set ""%s"" changes %s, which is fixed when the model is " + ...
             "compiled. Run it without FastRestart.", setName, strjoin(bad, ", "));

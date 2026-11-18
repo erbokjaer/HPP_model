@@ -1,12 +1,20 @@
 function cases = bess_soc()
-%BESS_SOC  State-of-charge limits of the WECC REEC_C battery control.
+%BESS_SOC  State-of-charge limits of the BESS.
 %   Nominal profile: the BESS discharges until the wind step at 20 s and
-%   charges afterwards. At SOCmin it may not discharge, at SOCmax it may
-%   not charge (current limit logic in BESS_ctrl).
+%   charges the renewable surplus afterwards. The HPPC derates the BESS
+%   discharge (charge) linearly to zero over hppc.SOCband (0.1) above SOCmin
+%   (below SOCmax); at SOCmin / SOCmax the BESS controller (REEC_C) also
+%   blocks discharge / charge. The "+20 MW" cases step P_ref at 40 s, so the
+%   BESS has to discharge (120 s runs, ramp 36 MW/min).
 
+    up = {"grid.Pstep.dP", 20e6, "sim.Tstop", 120};
     cases = caseList({
-        "SOC0 0.5",       {}
-        "at SOCmin",      {"bess.SOC0", 0.1}
-        "at SOCmax",      {"bess.SOC0", 0.9}
+        "SOC0 0.5",           {}
+        "SOC0 0.15",          {"bess.SOC0", 0.15}
+        "at SOCmin",          {"bess.SOC0", 0.1}
+        "SOC0 0.85",          {"bess.SOC0", 0.85}
+        "at SOCmax",          {"bess.SOC0", 0.9}
+        "SOC0 0.5, +20 MW",   up
+        "SOC0 0.15, +20 MW",  [up, {"bess.SOC0", 0.15}]
     });
 end
