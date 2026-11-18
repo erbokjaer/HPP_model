@@ -1,6 +1,6 @@
 # HPP_model: architecture of the hierarchical plant model
 
-Status: **stages 1–4 built** (2026-11-16): structure, N instances, communication delays, parameter structure, the phasor network, the IEC 61400-27-1 Type 4A wind turbine, the WECC REEC_B / REEC_C + REGC_A models for PV and BESS, closed-loop Q control in every asset controller, and REPC_A plant controllers (WPPC, SPPC, BESSC) with their own P, frequency and Q/V loops. Since 2026-11-17 also: two network models chosen per run (nodal and Simscape Electrical, section 5) and faster runs with Fast Restart, where almost all parameters change without recompiling (section 11). Stage 5 started (2026-11-17): the HPPC closes the P loop at the POC with the frequency response of the plant (central control) and, since 2026-11-18, a Q or voltage loop at the POC (section 8).
+Status: **stages 1–4 built** (2026-11-16): structure, N instances, communication delays, parameter structure, the phasor network, the IEC 61400-27-1 Type 4A wind turbine, the WECC REEC_B / REEC_C + REGC_A models for PV and BESS, closed-loop Q control in every asset controller, and REPC_A plant controllers (WPPC, SPPC, BESSC) with their own P, frequency and Q/V loops. Since 2026-11-17 also: two network models chosen per run (nodal and Simscape Electrical, section 5) and faster runs with Fast Restart, where almost all parameters change without recompiling (section 11). Stage 5 started (2026-11-17): the HPPC closes the P loop at the POC with the frequency response of the plant (central control) and, since 2026-11-18, a Q, voltage or power factor loop at the POC after the Danish grid code, with voltage control as a cascade over the plant controllers (section 8).
 Values marked *typical* are starting points to be replaced by project data.
 
 ## 1. Decisions
@@ -83,8 +83,9 @@ Signs: generator convention, + P = export / discharge, + Q = export (capacitive)
 | `P_avail_wpp`, `P_avail_spp` | pu | | |
 | `P_chg_max_bess`, `P_dis_max_bess`, `SOC_bess` | pu, – | | |
 | `P_wpp`, `Q_wpp`, `P_spp`, `Q_spp`, `P_bess`, `Q_bess` | pu | | |
+| `Q_sat_wpp`, `Q_sat_spp`, `Q_sat_bess` (plant Q order at its limit) | +1 / 0 / −1 | | |
 
-Functions, stage 5: P control at POC with ramp limits, Q / V / PF control at POC, frequency response (FSM / LFSM-O/U), dispatch between plants, POC limits. Built so far (section 8, stage 5): set-point ramp limit, LFSM-O / LFSM-U / FSM, export limit, closed-loop P, SOC-aware P dispatch, Q / voltage (slope) / power factor control, after Energinet's DK1 requirements (V_ref and PF are parameters, `p.hppc.Vref` / `PF`, not TSO signals yet). `f_meas` is measured locally (no communication delay).
+Functions, stage 5: P control at POC with ramp limits, Q / V / PF control at POC, frequency response (FSM / LFSM-O/U), dispatch between plants, POC limits. Built so far (section 8, stage 5): set-point ramp limit, LFSM-O / LFSM-U / FSM, export limit, closed-loop P, SOC-aware P dispatch, Q / voltage (slope) / power factor control, after Energinet's DK1 requirements (V_ref and PF are parameters, `p.hppc.Vref` / `PF`, not TSO signals yet); voltage control as a cascade over the plant controllers, POC Q limit, anti-windup over the plant limits (stage 5 step 4). `f_meas` is measured locally (no communication delay). Port order (20 inputs): TSO (P_ref, Q_ref, f_meas), POC (P, Q, V), then per plant its measurements with `Q_sat` last (wind: P_avail, P, Q, Q_sat; PV likewise; BESS: P_chg_max, P_dis_max, SOC, P, Q, Q_sat).
 
 ### 4.2 Plant controllers  (base: plant rating; vectors of width N)
 
@@ -93,7 +94,7 @@ Functions, stage 5: P control at POC with ramp limits, Q / V / PF control at POC
 | `P_set`, `Q_set` from HPPC | pu | `P_set_k`, `Q_set_k` (N) | pu |
 | `P_meas`, `Q_meas`, `V_meas` at plant connection | pu | `P_avail`, `P_plant`, `Q_plant` to HPPC | pu |
 | `P_avail_k` (N) from assets | pu | BESSC only: `P_chg_max`, `P_dis_max`, `SOC` | pu, – |
-| BESSC only: `SOC_k` (N) | – | | |
+| BESSC only: `SOC_k` (N) | – | `Q_sat` to HPPC (last output): +1 / −1 when the Q order is at its upper / lower limit | – |
 | `f_meas` grid frequency (last input) | pu | | |
 
 ### 4.3 Asset controllers  (base: asset rating)
@@ -167,8 +168,11 @@ p.net            transformers (incl. magnetizing branch), cables, lengths per fe
 p.comm           communication delays
 p.wt  / p.pv / p.bess   nFeeders, nPerFeeder, nAgg, Pn (N, Prated derived), asset-model parameters
 p.hppc           HPPC settings (P: Pflag, PI, Tref, Vfrz / Thld, ramp limit; frequency: Frqflag, LFSM-O / LFSM-U, FSM; SOCband;
-                 Q / V / PF: Qflag, RefFlag, Vref, Vslope, PF, PI, SCRset), copied into p.ctrl.hppc.par
-p.pc             plant controller (REPC_A) settings, copied into p.ctrl.wppc / sppc / bessc .par
+                 Q / V / PF: Qflag, QawFlag, RefFlag, Vref, Vslope, PF, PI, SCRset;
+                 voltage cascade: Vlocal, KpVt / KiVt, KcBusMin, cascadeSep), copied into p.ctrl.hppc.par
+p.pc             plant controller (REPC_A) settings incl. voltage-control gains KpV / KiV, copied into
+                 p.ctrl.wppc / sppc / bessc .par (droop Kc, dVdQ and, in voltage control, RefFlag / Vref
+                 set there by controllerParameters)
 p.ctrl.hppc      Ts, Pbase, par
 p.ctrl.wppc / sppc / bessc      Ts, Pbase, par
 p.ctrl.wt / pv / bess           Ts, Pbase, par   (one set, shared by all N instances;
@@ -242,6 +246,20 @@ Each stage ends with a regression check against the previous stage, as for the p
    - `wt_frt`: P_poc relative to the no-dip case back within 1.5 MW 0.13 / 0.51 / 0.29 s after clearing, no overshoot.
    - Not modelled: the island-detection delay of 500 ms (distribution-connected storage only), synthetic inertia, FRT current requirements at the POC (asset level only), the U-Q/Pmax profile and Q capability per P, the LFSM-O behaviour at minimum regulating level.
 
+   **Voltage control as a cascade, POC Q limit, anti-windup (step 4 done, 2026-11-18).** Developed partly in a parallel session and reviewed here.
+   - *Why:* in practice voltage is controlled in layers: each plant controller regulates the voltage at its own point with a droop (fast), and a master controller slowly corrects the set-points so the requirement holds at the POC (as primary and secondary voltage control in transmission grids). The requirement itself (slope, t1 / t2, Q range) is defined at the POC, so that part stays central. It also fits the research setting: vendor plant controllers that close their own loops under a coordinating HPPC.
+   - *Plant controllers* (`hppc.RefFlag` 1 with `hppc.Vlocal` 1, the default): each controls the 33 kV busbar voltage on a V-Q droop line Q = Q_set + (Vref − V)/Kc; Q_set, sent by the HPPC, is the offset of the line and is fed forward in both modes. The droop of all plants together is the POC slope minus the 33/132 kV transformer reactance (0.121 − 0.086 = 0.035 pu on 180 MVA for 4 %), at least `KcBusMin` 0.02 (a negative droop makes parallel plants push Q between each other); every plant gets the same droop on its own rating, so the Q split follows the ratings. The PI gains (`KpV` 0.5, `KiV` 2.5) are normalised by the busbar loop gain Kc + dV/dQ (dV/dQ = 1/SCR + transformer reactance, from the commissioned SCR).
+   - *HPPC:* trims the plants' Q offsets slowly (integral only, `KiVt` 0.3, about 3 s) so V and Q at the POC lie on the required slope. Only a share Kc/(Kc + dV/dQ) of an offset change becomes real Q (0.16 at SCR 10), so the order range is widened to ±Qmax/share. `Vlocal` 0 keeps the direct POC voltage control of step 3.
+   - *Cascade timing:* every level at least `cascadeSep` (3) times slower than the one below, estimated as (1 + Kp)/Ki; `controllerParameters` warns otherwise (`p.ctrl.hppc.cascade`). Asset Q PIs 5 → 10 /s (0.11 s), plant Q 1.1 s, plant voltage 0.6 s, HPPC Q / PF 0.5 → 0.2 /s (5.5 s), HPPC voltage trim 3.3 s.
+   - *POC Q limit:* with the plants doing the voltage control, the HPPC's ±0.33 pu order limit no longer limits Q at the POC. The HPPC now caps its voltage error by the Q margin, e = min(max(e, (Qmin − Q)·k), (Qmax − Q)·k) with k the loop gain (block "POC Q limit"), so the loop settles at the limit. Tighter plant order limits were tried and dropped: they limit the Q at the asset terminals, and the wind plant loses up to about 40 % of it in its transformers and cables (wind stopped at 28 instead of 49 Mvar).
+   - *Anti-windup over the plant limits:* the plant controllers report `Q_sat` (+1 / −1 when their Q order is at its limit; new last output); the HPPC holds its Q loop (error 0) in a direction where all plants are saturated (`QawFlag`, conditional integration). Its own output limits already have clamping in the PI block. This is part of the controller interfaces (DLL ports): HPPC 20 inputs, plant controllers one more output.
+   Checks (default layout, nodal network):
+   - Voltage control after a 2 % grid voltage drop: t90 0.40–0.59 s, settled within 0.52 s, overshoot 5–22 % for slopes 2–7 % and SCR 3–10 (t1 1 s, t2 5 s met). Set for SCR 10 on an SCR 3 grid: t90 0.12 s, 19 % overshoot (was 50–90 % with direct POC control). At a 2 % slope the needed busbar droop is negative, so `KcBusMin` applies and the trim pulls the slope right within its ~3 s.
+   - Q limit: grid −10 % / +8 % → Q_poc +59.40 / −59.40 Mvar; the plants' droop overshoots to +69 / −72 Mvar first, back within 0.3 Mvar of the limit after ~20 s.
+   - Anti-windup: plant Q limits 0.2 pu, grid −10 % from 40 to 60 s: Q back within 3 Mvar 0.9 s after the voltage returns; without anti-windup Q stays at +15.8 Mvar (V_poc 1.013) for 9.5 s.
+   - Controller speed and grid strength (SCR 3 / 10, set right and wrong): halving the plant voltage gains lowers the overshoot to 2–12 %, a quarter to 0–1 %, but t90 then reaches 1.23 / 2.75 s and misses t1. Final Q does not depend on the setting. The current gains are the compromise; an online estimate of dV/dQ would remove the dependence on the commissioned SCR.
+   - Q steps (overshoot 6–10 Mvar, settled 0.65 s), P control, frequency response, ramps, SOC limits and fault ride-through unchanged.
+
 Afterwards: code generation of every controller (needs the Coder products and a compiler), the IEEE/CIGRE wrapper, and PSCAD validation.
 
 ## 9. Decided after review (2026-11-16)
@@ -253,7 +271,9 @@ Afterwards: code generation of every controller (needs the Coder products and a 
 - **Per-instance parameters:** not planned, but kept possible. Every asset instance k already gets its own `p.<type>.ap(k)`, including its controller's `par`, so different turbine types in one plant only need different values in `ap(k)`; the model does not change.
 
 ## 10. Open points
-- **Stage 5, HPPC functions** (section 8): done: closed-loop P and frequency response at the POC (central control), P dispatch, Q or V control at the POC. Done since: ramp limits, LFSM-O / LFSM-U / FSM and PF control after the Danish grid code, SOC-aware dispatch (step 3). Next: V_ref and PF from the TSO, Q dispatch by available Q capability instead of rating, the U-Q/Pmax profile, SOC restoration (towards a target SOC), the ramp-limit overshoot after availability steps (0.5 MW), checking the requirements against the current RfG revision. Open question: how the central HPPC loops interact with plant controllers that keep their own P and frequency loops (decentral) — the coordination the research addresses.
+- **Stage 5, HPPC functions** (section 8): done: closed-loop P and frequency response at the POC (central control), P dispatch, Q or V control at the POC. Done since: ramp limits, LFSM-O / LFSM-U / FSM and PF control after the Danish grid code, SOC-aware dispatch (step 3); voltage control as a cascade over the plant controllers, POC Q limit and anti-windup (step 4). Next: V_ref and PF from the TSO, Q dispatch by available Q capability instead of rating, the U-Q/Pmax profile, SOC restoration (towards a target SOC), the ramp-limit overshoot after availability steps (0.5 MW), checking the requirements against the current RfG revision. Open question: how the central HPPC loops interact with plant controllers that keep their own P and frequency loops (decentral) — the coordination the research addresses.
+- **Dispatch on availability:** at the wind step (20 s) P_poc dips by about 13 MW for 0.3 s: the HPPC moves the BESS at once on the jump in wind availability, while the wind output follows only within about 0.5 s. Dispatching the BESS on the measured wind output (P_wpp is an HPPC input) would avoid it.
+- **Voltage control and grid strength:** the plant and HPPC voltage gains use the commissioned SCR (`SCRset`); an online estimate of dV/dQ would make them independent of it.
 - **WPPC:** uses the WECC REPC_A structure; the IEC 61400-27-1 WPP control model is a later refinement.
 - **Checks against the standard texts:** IEC Type 4A block details (filter forms, dip logic with hysteresis / post-fault hold, `Kqv` reference, current-limit options, `uqdip` / `Mqfrt` modes) and the WECC simplifications listed in stage 4 (VDL1/VDL2, state freeze and `Thld` during a dip, Pflag, high-voltage reactive current management, `Tfltr` in REGC_A, rate limits on the state). All parameter values are typical, not from a specific turbine or inverter.
 - **Spike at fault clearing:** the network with one-step-delayed current sources gives a single-step spike when a dip clears (Q_poc ≈ 125 Mvar for one step). A smaller step or a filter on the network voltage would remove it.
@@ -281,3 +301,10 @@ Effect: about 15 % faster per run; steady state unchanged, dip values within 0.7
 Fixed at compile time: the layout (units per plant), the time step, the communication delays and the network model. `runCase` remembers these for the compiled model and recompiles by itself when one changes; `runSweep` with Fast Restart refuses case sets that change them. Tried and dropped: the whole network data as one tunable parameter structure and variable-length delays; each made every run 0.5–0.75 s per simulated second slower.
 
 Measured: 1 × 1 layout per plant, nodal network: first run including compile about 18 s, every further run about 3 s; an SCR change without recompiling gives the same result as a full run (V_poc 0.9653 at SCR 3); `grid_strength` (3 cases) 25 s in total. Default layout (2 / 2 / 1): first run about 50 s, further runs about 16 s. Simscape network: about 40 s per further run.
+
+## 12. Figures  (2026-11-18)
+
+`plotAllResults` makes the figures from the saved results, for two purposes with their own folders:
+- **report** (`results/figures/report/`): one small figure per point a case set makes, defined in `scripts/reportFigures.m` (cases, signals per axis, time window, a one-line statement of what it shows). 8.8 cm wide (one column), 8 pt Times, at most two or three axes, legend inside the top axis with headroom left for it, references dashed, fault cases zoomed on the fault; vector PDF for LaTeX plus a PNG preview. The statements are checked against the results when the cases are rerun.
+- **debug** (`results/figures/debug/`): every logged signal of every case of a set in one figure (P, Q, V, f, plant P with availability, BESS P with set-point, SOC, plant Q), full time plus a zoom on the event; PNG and `.fig`. Lines are thinned (minimum and maximum per bin, so peaks stay), since full-resolution figures of 16 cases ran MATLAB out of graphics memory.
+Logged signals: P, Q, V at the POC, V_bus, P_ref, Q_ref, f, P / Q per plant, P_bess_set, available wind and PV power, SOC. Case sets were trimmed for the figures: open-loop cases removed, frequency steps at 50 s and voltage dips at 45 s, after the plant has ramped up following the wind step at 20 s.
