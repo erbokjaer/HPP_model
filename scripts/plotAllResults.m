@@ -188,6 +188,8 @@ function files = debugMode(opts, folder, root)
                         if ~isempty(out(k).ErrorMessage), continue, end
                         [tt, y] = signal(out(k), sig);
                         if isempty(tt), continue, end
+                        win = views{v, 2};  if isempty(win), win = [tt(1) tt(end)]; end
+                        [tt, y] = thin(tt, y, win);      % keeps peaks, saves graphics memory
                         col = C(mod(k - 1, size(C, 1)) + 1, :);
                         ls = "-";  if isReference(sig) || sig == "V_bus", ls = "--"; end
                         h = plot(ax(g), tt, y, "Color", col, "LineStyle", ls, "LineWidth", 0.9, "DisplayName", labels(k));

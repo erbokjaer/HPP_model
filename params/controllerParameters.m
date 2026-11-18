@@ -49,6 +49,79 @@ function ctrl = controllerParameters(p)
     ctrl.bessc.par.SOCmin = p.bess.SOCmin;
     ctrl.bessc.par.SOCmax = p.bess.SOCmax;
 
+    % Voltage control (hppc.RefFlag = 1). With hppc.Vlocal = 1 the plant
+    % controllers control the 33 kV busbar voltage themselves (fast), on a
+    % V-Q droop line Q = Q_set + (Vref - V)/Kc whose offset Q_set comes from
+    % the HPPC; the HPPC only trims the offsets slowly so that V and Q at the
+    % POC lie on the required slope. The busbar droop (all plants together,
+    % pu on Pbase) is the POC slope minus the 33/132 kV transformer
+    % reactance, so the plants alone already give about the POC slope; it is
+    % kept >= KcBusMin, since a negative droop makes the parallel plants
+    % unstable against each other (circulating Q).
+    Sb    = p.grid.Pbase;
+    tr    = p.net.main;
+    xTr   = tr.uk * tr.XR / hypot(1, tr.XR) * Sb / tr.S;     % [pu on Pbase]
+    xBus  = 1 / scr + xTr;                                    % busbar dV/dQ [pu on Pbase]
+    KcPoc = p.hppc.Vslope / p.hppc.Qmax;                      % required slope at the POC
+    KcBus = max(KcPoc - xTr, p.hppc.KcBusMin);                % busbar droop, all plants
+    sumP  = sum(Prated) / Sb;
+    vlocal = p.hppc.RefFlag == 1 && p.hppc.Vlocal == 1;
+    % POC Q limit with local voltage control: held by the HPPC (block "POC Q
+    % limit"). The plants keep their own order limits: those limit the Q at
+    % the asset terminals, and the wind plant loses up to ~40 % of it in its
+    % transformers and cables, so a tighter order limit would hold the plant
+    % below its share at the busbar.
+    for c = ["wppc", "sppc", "bessc"]
+        % on each plant's own rating: equal droop k makes the Q split follow the ratings
+        ctrl.(c).par.dVdQ = xBus * sumP;
+        if vlocal
+            ctrl.(c).par.RefFlag = 1;
+            ctrl.(c).par.Vref    = p.hppc.Vref;
+            ctrl.(c).par.Kc      = KcBus * sumP;
+        end
+    end
+    if vlocal   % HPPC: slow trim of the plants' Q offsets
+        auth = KcBus / (KcBus + xBus);       % share of an offset change that becomes real Q
+        ctrl.hppc.par.LV   = (KcPoc + 1 / scr) * auth;
+        ctrl.hppc.par.KpVn = p.hppc.KpVt;
+        ctrl.hppc.par.KiVn = p.hppc.KiVt;
+        ctrl.hppc.par.QmaxOrd = p.hppc.Qmax / auth;   % offset range; real Q limited by the plants
+        ctrl.hppc.par.QminOrd = p.hppc.Qmin / auth;
+    else        % HPPC: direct voltage control at the POC
+        ctrl.hppc.par.LV   = KcPoc + 1 / scr;
+        ctrl.hppc.par.KpVn = p.hppc.KpV;
+        ctrl.hppc.par.KiVn = p.hppc.KiV;
+        ctrl.hppc.par.QmaxOrd = p.hppc.Qmax;
+        ctrl.hppc.par.QminOrd = p.hppc.Qmin;
+    end
+
+    % Cascade check: every level must be clearly slower than the one under
+    % it. Speed = closed-loop time constant of the PI, about (1 + Kp)/Ki with
+    % the gains normalised by the loop gain (Q loops: loop gain 1).
+    tau = @(kp, ki) (1 + kp) / ki;
+    tAsset = max([tau(p.wt.iec.ctrl.kpq, p.wt.iec.ctrl.kiq), tau(p.pv.wecc.ctrl.Kqp, p.pv.wecc.ctrl.Kqi), ...
+                  tau(p.bess.wecc.ctrl.Kqp, p.bess.wecc.ctrl.Kqi)]);
+    pcs = [p.pc.wppc, p.pc.sppc, p.pc.bessc];
+    if vlocal
+        tPlant = max(arrayfun(@(r) tau(r.KpV, r.KiV), pcs));  plantLoop = "plant voltage";
+        tHppc  = tau(p.hppc.KpVt, p.hppc.KiVt);               hppcLoop  = "HPPC voltage trim";
+    else
+        tPlant = max(arrayfun(@(r) tau(r.Kp, r.Ki), pcs));    plantLoop = "plant Q";
+        if p.hppc.RefFlag == 1
+            tHppc = tau(p.hppc.KpV, p.hppc.KiV);              hppcLoop  = "HPPC voltage";
+        else
+            tHppc = tau(p.hppc.Kpq, p.hppc.Kiq);              hppcLoop  = "HPPC Q / PF";
+        end
+    end
+    ctrl.hppc.cascade = struct("asset", tAsset, "plant", tPlant, "hppc", tHppc, ...
+        "plantLoop", plantLoop, "hppcLoop", hppcLoop);
+    sep = p.hppc.cascadeSep;
+    if tPlant < sep * tAsset || tHppc < sep * tPlant
+        warning("controllerParameters:cascade", ...
+            "Control cascade not separated by %gx: asset Q %.2f s, %s %.2f s, %s %.2f s.", ...
+            sep, tAsset, plantLoop, tPlant, hppcLoop, tHppc);
+    end
+
     % Asset controllers (run at the simulation step)
     ctrl.wt   = assetCtrl(p.sim.Ts, p.wt.nAgg * p.wt.Pn);
     for f = string(fieldnames(p.wt.iec.ctrl))'     % IEC 61400-27-1 Type 4A control

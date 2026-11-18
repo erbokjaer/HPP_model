@@ -40,7 +40,7 @@ function wt = windTurbineParameters()
     wt.iec.ctrl.imax     = 1.1;    % max total current (current limitation)
     wt.iec.ctrl.MqG      = 1;      % Q control mode: 1 closed-loop reactive power, 2 open loop
     wt.iec.ctrl.kpq      = 0.1;    % reactive power PI, proportional gain [pu i / pu q]
-    wt.iec.ctrl.kiq      = 5;      % reactive power PI, integral gain [1/s]
+    wt.iec.ctrl.kiq      = 10;     % reactive power PI, integral gain [1/s] (about 0.1 s: fastest level of the cascade)
 
     % generator system (asset model WT_asset -> p.wt.ap(k).gen)
     wt.iec.gen.Tg     = 0.01;      % current generation time constant

@@ -37,7 +37,7 @@ function bess = batteryParameters()
     bess.wecc.ctrl.Iql1   = -1.05;  % min injected reactive current
     bess.wecc.ctrl.Qflag  = 1;      % 1: closed-loop Q (PI on Q_set - Q_gen), 0: open loop Iq = Q / V
     bess.wecc.ctrl.Kqp    = 0.1;    % reactive power PI, proportional gain
-    bess.wecc.ctrl.Kqi    = 5;      % reactive power PI, integral gain [1/s]
+    bess.wecc.ctrl.Kqi    = 10;     % reactive power PI, integral gain [1/s] (about 0.1 s: fastest level of the cascade)
     bess.wecc.ctrl.Tiq    = 0.02;   % reactive current lag
     bess.wecc.ctrl.dPmax  = 99;     % P reference ramp up [pu/s]
     bess.wecc.ctrl.dPmin  = -99;    % P reference ramp down [pu/s]

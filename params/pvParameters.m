@@ -32,7 +32,7 @@ function pv = pvParameters()
     pv.wecc.ctrl.Iql1   = -1.05;  % min injected reactive current
     pv.wecc.ctrl.Qflag  = 1;      % 1: closed-loop Q (PI on Q_set - Q_gen), 0: open loop Iq = Q / V
     pv.wecc.ctrl.Kqp    = 0.1;    % reactive power PI, proportional gain
-    pv.wecc.ctrl.Kqi    = 5;      % reactive power PI, integral gain [1/s]
+    pv.wecc.ctrl.Kqi    = 10;     % reactive power PI, integral gain [1/s] (about 0.1 s: fastest level of the cascade)
     pv.wecc.ctrl.Tiq    = 0.02;   % reactive current lag
     pv.wecc.ctrl.dPmax  = 99;     % P reference ramp up [pu/s]
     pv.wecc.ctrl.dPmin  = -99;    % P reference ramp down [pu/s]

@@ -103,9 +103,9 @@ function specs = controllerSpecs()
     % ---- HPP controller (base: POC) ----
     % inputs grouped per source: TSO, POC, wind plant, PV plant, BESS plant
     in = ["P_ref","Q_ref","f_meas","P_poc","Q_poc","V_poc", ...
-          "P_avail_wpp","P_wpp","Q_wpp", ...
-          "P_avail_spp","P_spp","Q_spp", ...
-          "P_chg_max_bess","P_dis_max_bess","SOC_bess","P_bess","Q_bess"];
+          "P_avail_wpp","P_wpp","Q_wpp","Q_sat_wpp", ...
+          "P_avail_spp","P_spp","Q_spp","Q_sat_spp", ...
+          "P_chg_max_bess","P_dis_max_bess","SOC_bess","P_bess","Q_bess","Q_sat_bess"];
     out = ["P_set_wpp","Q_set_wpp","P_set_spp","Q_set_spp","P_set_bess","Q_set_bess"];
     body = [
         "% Placeholder (stages 1-2): wind and PV deliver what is available, the BESS"
@@ -151,6 +151,8 @@ function specs = controllerSpecs()
             body = [body; "P_chg_max = s;  % stage 1: symmetric limits, no SOC limits yet"; ...
                           "P_dis_max = s;"; "SOC = sum(par.share .* SOC_k);"]; %#ok<AGROW>
         end
+        out = [out, dims("Q_sat")]; %#ok<AGROW>   % Q order at its limit (HPPC anti-windup)
+        body = [body; "Q_sat = 0;"]; %#ok<AGROW>
         specs(end+1) = spec(pc.name, pc.cfield, in, out, body, ...
             pc.name + " plant controller. Per unit on the plant rating; asset vectors of width N."); %#ok<AGROW>
     end
@@ -863,9 +865,10 @@ function buildHppcSub(sys)
     newSubsystem(sys);
     hb = "p.ctrl.hppc.Pbase";
     meas = ["gain:1/" + hb, "memory", "delay:p.comm.meas_hppc"];
+    flag = ["memory", "delay:p.comm.meas_hppc"];  % no unit (SOC, saturation flags)
     pitch = 38;                                   % HPPC port spacing
     add_block("simulink/Ports & Subsystems/Model", sys + "/HPPC", "ModelName", "HPPC", ...
-        "Position", [560 40 740 40 + 17*pitch]);
+        "Position", [560 40 740 40 + 20*pitch]);
     Simulink.ModelReference.refresh(sys + "/HPPC");
     setArg(sys + "/HPPC", "par", "p.ctrl.hppc.par");
     set_param(sys + "/HPPC", "BackgroundColor", areaColor("controller"));
@@ -874,15 +877,16 @@ function buildHppcSub(sys)
     G = { ...
       "TSO",       1, ["P_ref","Q_ref","f_meas"],             1:3,   {["gain:1/" + hb, "delay:p.comm.tso@p.grid.Pref/" + hb], ["gain:1/" + hb, "delay:p.comm.tso@p.grid.Qref/" + hb], strings(1,0)}; ...
       "POC meas",  2, ["P_poc","Q_poc","V_poc"],              4:6,   {meas, meas, ["memory", "delay:p.comm.meas_hppc@1"]}; ...
-      "meas wpp",  3, ["P_avail","P","Q"],                    7:9,   {meas, meas, meas}; ...
-      "meas spp",  4, ["P_avail","P","Q"],                    10:12, {meas, meas, meas}; ...
-      "meas bess", 5, ["P","Q","P_chg_max","P_dis_max","SOC"], 13:17, {meas, meas, meas, meas, ["memory", "delay:p.comm.meas_hppc"]}};
-    hppcIn = ["P_ref","Q_ref","f_meas","P_poc","Q_poc","V_poc","P_avail_wpp","P_wpp","Q_wpp", ...
-              "P_avail_spp","P_spp","Q_spp","P_chg_max_bess","P_dis_max_bess","SOC_bess","P_bess","Q_bess"];
+      "meas wpp",  3, ["P_avail","P","Q","Q_sat"],            7:10,  {meas, meas, meas, flag}; ...
+      "meas spp",  4, ["P_avail","P","Q","Q_sat"],            11:14, {meas, meas, meas, flag}; ...
+      "meas bess", 5, ["P","Q","P_chg_max","P_dis_max","SOC","Q_sat"], 15:20, {meas, meas, meas, meas, flag, flag}};
+    hppcIn = ["P_ref","Q_ref","f_meas","P_poc","Q_poc","V_poc","P_avail_wpp","P_wpp","Q_wpp","Q_sat_wpp", ...
+              "P_avail_spp","P_spp","Q_spp","Q_sat_spp","P_chg_max_bess","P_dis_max_bess","SOC_bess", ...
+              "P_bess","Q_bess","Q_sat_bess"];
     for i = 1:size(G, 1)
         [name, port, elems, ports, steps] = G{i, :};
-        % BESS: bus order P, Q, P_chg_max, P_dis_max, SOC -> HPPC ports 16, 17, 13, 14, 15
-        if name == "meas bess", ports = [16 17 13 14 15]; end
+        % BESS: bus order P, Q, P_chg_max, P_dis_max, SOC, Q_sat -> HPPC ports 18, 19, 15, 16, 17, 20
+        if name == "meas bess", ports = [18 19 15 16 17 20]; end
         inport(sys, name, port);
         sel = name + " sel";
         add_block("simulink/Signal Routing/Bus Selector", sys + "/" + sel);
@@ -950,7 +954,7 @@ function buildPlantSub(sys, p, pl, idx, offset)
     blue = "[0.592 0.620 0.957]";  green = "[0.122 0.816 0.510]";  orange = "[0.988 0.463 0.204]";
 
     % ---- plant controller ----
-    nCin = 7 + isB;  nCout = 5 + 3*isB;
+    nCin = 7 + isB;  nCout = 6 + 3*isB;
     pitch = 42;
     add_block("simulink/Ports & Subsystems/Model", sys + "/" + C, "ModelName", C, ...
         "Position", [760 60 940 60 + max(nCin, nCout)*pitch]);
@@ -1086,9 +1090,9 @@ function buildPlantSub(sys, p, pl, idx, offset)
     if isB
         add_block("simulink/Sinks/Terminator", sys + "/P_avail unused", "Position", [0 0 20 20]);
         rowFrom(sys, C + "/3", "P_avail unused", "P_avail", 40);
-        mPorts = 4:8;  names = ["P", "Q", "P_chg_max", "P_dis_max", "SOC"];
+        mPorts = 4:9;  names = ["P", "Q", "P_chg_max", "P_dis_max", "SOC", "Q_sat"];
     else
-        mPorts = 3:5;  names = ["P_avail", "P", "Q"];
+        mPorts = 3:6;  names = ["P_avail", "P", "Q", "Q_sat"];
     end
     % BESS: one extra element below the controller ports, SOC_plant = the
     % share-weighted mean of the asset SOCs (continuous; for logging), so
@@ -1100,8 +1104,8 @@ function buildPlantSub(sys, p, pl, idx, offset)
     xb = get_param(sys + "/injection", "Position");  xb = xb(1);   % same column as the I output
     set_param(sys + "/meas bus", "Position", [xb, y1 - d/2, xb + 5, y1 - d/2 + nBus*d]);
     for j = 1:numel(names)
-        if names(j) == "SOC"
-            ln(sys, C + "/" + mPorts(j), "meas bus/" + j, "SOC");
+        if ismember(names(j), ["SOC", "Q_sat"])          % no unit conversion
+            ln(sys, C + "/" + mPorts(j), "meas bus/" + j, names(j));
         else
             L = makeLink(sys, names(j) + " to W", "gain:" + pb);
             lw = get_param(sys + "/" + L, "Position");  lw = lw(3) - lw(1);
@@ -1855,8 +1859,9 @@ end
 %  voltage control at the POC over the plants' own Q loops (Q order split
 %  by rating). Ports (pu on p.ctrl.hppc.Pbase):
 %    in   1 P_ref 2 Q_ref 3 f_meas 4 P_poc 5 Q_poc 6 V_poc
-%         7 P_avail_wpp 8 P_wpp 9 Q_wpp 10 P_avail_spp 11 P_spp 12 Q_spp
-%         13 P_chg_max_bess 14 P_dis_max_bess 15 SOC_bess 16 P_bess 17 Q_bess
+%         7 P_avail_wpp 8 P_wpp 9 Q_wpp 10 Q_sat_wpp
+%         11 P_avail_spp 12 P_spp 13 Q_spp 14 Q_sat_spp
+%         15 P_chg_max_bess 16 P_dis_max_bess 17 SOC_bess 18 P_bess 19 Q_bess 20 Q_sat_bess
 %    out  1 P_set_wpp 2 Q_set_wpp 3 P_set_spp 4 Q_set_spp 5 P_set_bess 6 Q_set_bess
 %  ===================================================================
 function buildHppcCtrl(folder)
@@ -1871,13 +1876,14 @@ function buildHppcCtrl(folder)
         "plants by rating. Both PIs frozen in a voltage dip. " + ...
         "Per unit on p.ctrl.hppc.Pbase. Parameters: model argument " + ...
         "par (= p.ctrl.hppc.par, from p.hppc).", false);
-    ins = ["P_ref", "Q_ref", "f_meas", "P_poc", "Q_poc", "V_poc", "P_avail_wpp", "P_wpp", "Q_wpp", ...
-           "P_avail_spp", "P_spp", "Q_spp", "P_chg_max_bess", "P_dis_max_bess", "SOC_bess", "P_bess", "Q_bess"];
+    ins = ["P_ref", "Q_ref", "f_meas", "P_poc", "Q_poc", "V_poc", "P_avail_wpp", "P_wpp", "Q_wpp", "Q_sat_wpp", ...
+           "P_avail_spp", "P_spp", "Q_spp", "Q_sat_spp", "P_chg_max_bess", "P_dis_max_bess", "SOC_bess", ...
+           "P_bess", "Q_bess", "Q_sat_bess"];
     outs = ["P_set_wpp", "Q_set_wpp", "P_set_spp", "Q_set_spp", "P_set_bess", "Q_set_bess"];
     cm.ref  = ["P_ref", "Q_ref", "P_base", "P_target", "P_ord", "Q_refx", "Q_ff", "Q_ord", outs];
     cm.meas = ["f_meas", "P_poc", "Q_poc", "V_poc", "P_avail_wpp", "P_wpp", "Q_wpp", "P_avail_spp", ...
                "P_spp", "Q_spp", "P_chg_max_bess", "P_dis_max_bess", "SOC_bess", "P_bess", "Q_bess", ...
-               "P_filt", "Q_filt", "V_filt", "P_hi", "P_lo"];
+               "P_filt", "Q_filt", "V_filt", "P_hi", "P_lo", "Q_sat_wpp", "Q_sat_spp", "Q_sat_bess"];
     [hIn, x] = ctrlInputs(mdl, ins, repmat("1", 1, numel(ins)), cm);
 
     % measurements, SOC-aware BESS limits and plant P limits
@@ -1997,13 +2003,24 @@ function buildHppcCtrl(folder)
     nb(mdl, "sum", "V + Kc Q", "Inputs", "++");
     kc(mdl, "Vref", "par.Vref");
     nb(mdl, "sum", "V error", "Inputs", "+-");
+    body = [
+        "% Q limit at the POC in voltage control: where the slope asks for more"
+        "% than Qmax (less than Qmin), the voltage error is capped by the Q margin,"
+        "% scaled by the loop gain (V error per Q), so the loop settles at the"
+        "% limit. Needed with local voltage control in the plants, where the HPPC"
+        "% order is only the offset of their droop lines."
+        "k = par.Vslope / par.Qmax + par.dVdQ;"
+        "V_errL = min(max(V_err, (par.Qmin - Q_filt) * k), (par.Qmax - Q_filt) * k);"];
+    addMatlabFunction(mdl + "/POC Q limit", "poc_q_limit", ["V_err", "Q_filt"], "V_errL", body, "par", [0 0 110 60]);
     nb(mdl, "gain", "tan phi", "Gain", "par.PFsign * sqrt(1 / par.PF^2 - 1)");
     kc(mdl, "PF mode", "double(par.RefFlag == 2)");
     nb(mdl, "switch", "PF control?", "Criteria", "u2 ~= 0");
     kc(mdl, "RefFlag ff", "double(par.RefFlag == 1)");  kc(mdl, "no Q ff", "0");
     nb(mdl, "switch", "Q feed-forward", "Criteria", "u2 ~= 0");
-    kc(mdl, "Qmax", "par.Qmax");  nb(mdl, "sum", "Qmax - ff", "Inputs", "+-");
-    kc(mdl, "Qmin", "par.Qmin");  nb(mdl, "sum", "Qmin - ff", "Inputs", "+-");
+    % order limits: Qmax / Qmin, or wider when the order is only the offset of
+    % the plants' local V-Q droop lines (the plants limit their real Q)
+    kc(mdl, "Qmax", "par.QmaxOrd");  nb(mdl, "sum", "Qmax - ff", "Inputs", "+-");
+    kc(mdl, "Qmin", "par.QminOrd");  nb(mdl, "sum", "Qmin - ff", "Inputs", "+-");
     lagBlk(mdl, "TrefQ", "par.TrefQ", "0");
     nb(mdl, "sum", "Q error", "Inputs", "+-");
     kc(mdl, "RefFlag", "double(par.RefFlag == 1)");
@@ -2013,23 +2030,39 @@ function buildHppcCtrl(folder)
     kc(mdl, "Q frozen", "0");
     nb(mdl, "switch", "freeze Q in dip", "Criteria", "u2 ~= 0");
     nb(mdl, "sat", "eqmax eqmin", "UpperLimit", "par.eqmax", "LowerLimit", "par.eqmin");
-    % voltage control: gains normalised by the loop gain dV/dQ + slope / Qmax,
-    % so the response is about the same for every slope and grid strength
-    kv = "(par.Vslope / par.Qmax + par.dVdQ)";
-    piBlk(mdl, "Q PI", "par.Kpq + (par.RefFlag == 1)*(par.KpV / " + kv + " - par.Kpq)", ...
-        "par.Kiq + (par.RefFlag == 1)*(par.KiV / " + kv + " - par.Kiq)", "");
+    % voltage control: gains normalised by the loop gain LV (from
+    % controllerParameters: with local voltage control in the plants it is
+    % the slow trim of their Q offsets, otherwise direct POC voltage control)
+    body = [
+        "% Anti-windup over the plant limits (conditional integration): the HPPC"
+        "% order is split over all plants, so when every plant reports its Q order"
+        "% at the upper (lower) limit, more (less) order cannot change Q: hold the"
+        "% Q loop (error 0) in that direction. Plants' own limits are inside the"
+        "% plant controllers; this is how the HPPC learns about them."
+        "up = Q_sat_wpp > 0.5 && Q_sat_spp > 0.5 && Q_sat_bess > 0.5;"
+        "dn = Q_sat_wpp < -0.5 && Q_sat_spp < -0.5 && Q_sat_bess < -0.5;"
+        "e_aw = e;"
+        "if par.QawFlag && ((e > 0 && up) || (e < 0 && dn))"
+        "    e_aw = 0;"
+        "end"];
+    addMatlabFunction(mdl + "/plant anti-windup", "plant_anti_windup", ["e", "Q_sat_wpp", "Q_sat_spp", "Q_sat_bess"], ...
+        "e_aw", body, "par", [0 0 130 140]);
+    piBlk(mdl, "Q PI", "par.Kpq + (par.RefFlag == 1)*(par.KpVn / par.LV - par.Kpq)", ...
+        "par.Kiq + (par.RefFlag == 1)*(par.KiVn / par.LV - par.Kiq)", "");
     nb(mdl, "sum", "ff + Q PI", "Inputs", "++");
-    nb(mdl, "sat", "Qmax Qmin", "UpperLimit", "par.Qmax", "LowerLimit", "par.Qmin");
+    nb(mdl, "sat", "Qmax Qmin", "UpperLimit", "par.QmaxOrd", "LowerLimit", "par.QminOrd");
     rowsQ = {
         [stg("@Q_filt", 0), stg("Kc"), stg(">KcQ")]
-        [stg("@V_filt", 0), stg("V + Kc Q", 1, {2, "@KcQ"}), stg("V error", 2, {1, "Vref"}), stg(">V_err")]
+        [stg("@V_filt", 0), stg("V + Kc Q", 1, {2, "@KcQ"}), stg("V error", 2, {1, "Vref"}), ...
+         stg("POC Q limit", 1, {2, "@Q_filt"}), stg(">V_err")]
         [stg("@P_filt", 0), stg("tan phi"), stg("PF control?", 1, {2, "PF mode"; 3, "@Q_ref"}), stg(">Q_refx")]
         [stg("@Q_refx", 0), stg("Q feed-forward", 3, {1, "no Q ff"; 2, "RefFlag ff"}), stg(">Q_ff")]
         [stg("Qmax", 0), stg("Qmax - ff", 1, {2, "@Q_ff"}), stg(">Q_up_PI")]
         [stg("Qmin", 0), stg("Qmin - ff", 1, {2, "@Q_ff"}), stg(">Q_lo_PI")]
         [stg("@Q_refx", 0), stg("TrefQ"), stg("Q error", 1, {2, "@Q_filt"}), stg("V control?", 3, {1, "@V_err"; 2, "RefFlag"}), ...
          stg("Q loop on?", 1, {2, "Qflag"; 3, "no Q loop"}), stg("freeze Q in dip", 3, {1, "Q frozen"; 2, "@frz"}), ...
-         stg("eqmax eqmin"), stg("Q PI", 1, {2, "@Q_up_PI"; 3, "@Q_lo_PI"}), stg(">Q_PI")]
+         stg("eqmax eqmin"), stg("plant anti-windup", 1, {2, "@Q_sat_wpp"; 3, "@Q_sat_spp"; 4, "@Q_sat_bess"}), ...
+         stg("Q PI", 1, {2, "@Q_up_PI"; 3, "@Q_lo_PI"}), stg(">Q_PI")]
         [stg("@Q_ff", 0), stg("ff + Q PI", 1, {2, "@Q_PI"}), stg("Qmax Qmin"), stg(">Q_ord")]};
     x2 = max([r1 r2 r3]) + 80;   % second column of function areas
     [y2, h6, r6] = ctrlSection(mdl, "Q, V or PF control at the POC (Qflag, RefFlag 0 1 2)", rowsQ, x2, 20, cm, areaColor("controller"));
@@ -2084,6 +2117,8 @@ end
 %    in  1 P_set 2 Q_set 3 P_meas 4 Q_meas 5 V_meas 6 P_avail_k [7 SOC_k] last f_meas
 %    out 1 P_set_k 2 Q_set_k 3 P_avail 4 P_plant 5 Q_plant
 %        [6 P_chg_max 7 P_dis_max 8 SOC]       (pu on the plant rating)
+%        last: Q_sat (+1 / -1: Q order at its upper / lower limit; for the
+%        HPPC's anti-windup)
 %  ===================================================================
 function buildPlantCtrlRepc(name, folder)
     mdl = string(name);
@@ -2172,14 +2207,20 @@ function buildPlantCtrlRepc(name, folder)
          stg("Pmax Pmin", 2, {1, "@" + up; 3, "@P_lo"}), stg("Tlag"), stg(">P_ord")]};
     [y, h3, r3] = ctrlSection(mdl, "P control (Frqflag)", rowsP, x, y, cm, areaColor("controller"));
 
-    % Q or V control (RefFlag): PI on the Q or V error, Q_set fed forward in Q control
+    % Q or V control (RefFlag): PI on the Q error, or local voltage control on
+    % a V-Q droop line whose Q offset is the HPPC set-point:
+    % Vref - V - Kc (Q - Q_set) = 0, i.e. Q = Q_set + (Vref - V) / Kc.
+    % Q_set is fed forward in both modes. Voltage-control gains are normalised
+    % by the loop gain Kc + dVdQ (dVdQ: busbar dV/dQ of all plants together,
+    % on the own rating), so the speed hardly depends on the grid.
+    nb(mdl, "sum", "Q - Q_set", "Inputs", "+-");
     nb(mdl, "gain", "Kc", "Gain", "par.Kc");
     nb(mdl, "sum", "V + Kc Q", "Inputs", "++");
     kc(mdl, "Vref", "par.Vref");
     nb(mdl, "sum", "V error", "Inputs", "+-");
     kc(mdl, "Vfrz", "par.Vfrz");
     nb(mdl, "rel", "V < Vfrz", "Operator", "<");
-    kc(mdl, "RefFlag ff", "par.RefFlag");  kc(mdl, "no ff", "0");
+    kc(mdl, "RefFlag ff", "0");  kc(mdl, "no ff", "0");   % Q_set fed forward in both modes
     nb(mdl, "switch", "Q feed-forward", "Criteria", "u2 ~= 0");
     kc(mdl, "Qmax", "par.Qmax");  nb(mdl, "sum", "Qmax - ff", "Inputs", "+-");
     kc(mdl, "Qmin", "par.Qmin");  nb(mdl, "sum", "Qmin - ff", "Inputs", "+-");
@@ -2190,11 +2231,18 @@ function buildPlantCtrlRepc(name, folder)
     nb(mdl, "sat", "emax emin", "UpperLimit", "par.emax", "LowerLimit", "par.emin");
     kc(mdl, "frozen", "0");
     nb(mdl, "switch", "freeze", "Criteria", "u2 ~= 0");
-    piBlk(mdl, "Kp Ki", "par.Kp", "par.Ki", "");
+    piBlk(mdl, "Kp Ki", "par.Kp + par.RefFlag*(par.KpV / (par.Kc + par.dVdQ) - par.Kp)", ...
+        "par.Ki + par.RefFlag*(par.KiV / (par.Kc + par.dVdQ) - par.Ki)", "");
     nb(mdl, "sum", "ff + PI", "Inputs", "++");
     lagBlk(mdl, "Tfv", "par.Tfv", "0");
+    % saturation status for the HPPC's anti-windup: +1 / -1 when the Q order
+    % is at its upper / lower limit (the plant cannot give more / less)
+    body = [
+        "tol = 1e-4;"
+        "Q_sat = double(Q_u >= par.Qmax - tol) - double(Q_u <= par.Qmin + tol);"];
+    addMatlabFunction(mdl + "/Q saturation", "q_saturation", "Q_u", "Q_sat", body, "par", [0 0 110 40]);
     rowsQ = {
-        [stg("@Q_filt", 0), stg("Kc"), stg(">KcQ")]
+        [stg("@Q_filt", 0), stg("Q - Q_set", 1, {2, "@Q_set"}), stg("Kc"), stg(">KcQ")]
         [stg("@V_filt", 0), stg("V + Kc Q", 1, {2, "@KcQ"}), stg("V error", 2, {1, "Vref"}), stg(">V_err")]
         [stg("@V_filt", 0), stg("V < Vfrz", 1, {2, "Vfrz"}), stg(">V_low")]
         [stg("@Q_set", 0), stg("Q feed-forward", 3, {1, "no ff"; 2, "RefFlag ff"}), stg(">Q_ff")]
@@ -2203,7 +2251,8 @@ function buildPlantCtrlRepc(name, folder)
         [stg("@Q_set", 0), stg("Q error", 1, {2, "@Q_filt"}), stg("V control?", 3, {1, "@V_err"; 2, "RefFlag"}), ...
          stg("dbd"), stg("emax emin"), stg("freeze", 3, {1, "frozen"; 2, "@V_low"}), ...
          stg("Kp Ki", 1, {2, "@Q_up_PI"; 3, "@Q_lo_PI"}), stg(">Q_PI")]
-        [stg("@Q_ff", 0), stg("ff + PI", 1, {2, "@Q_PI"}), stg("Tfv"), stg(">Q_ord")]};
+        [stg("@Q_ff", 0), stg("ff + PI", 1, {2, "@Q_PI"}, {1, "Q_u"}), stg("Tfv"), stg(">Q_ord")]
+        [stg("@Q_u", 0), stg("Q saturation"), stg(">Q_sat")]};
     x2 = max([r1 r2 r3]) + 80;   % second column of function areas
     [y, h4, r4] = ctrlSection(mdl, "Q or V control (RefFlag)", rowsQ, x2, 20, cm, areaColor("controller"));
 
@@ -2247,6 +2296,7 @@ function buildPlantCtrlRepc(name, folder)
         outs = [outs, "P_chg_max", "P_dis_max", "SOC"];
         srcs = [srcs, "@P_chg_max", "@P_dis_max", "@SOC"];
     end
+    outs = [outs, "Q_sat"];  srcs = [srcs, "@Q_sat"];   % last output: Q order at its limit (+1 / -1)
     hOut = ctrlOutputs(mdl, outs, srcs, max([r1 r2 r3 r4 r5]) + 110, cm);
     alignColumns(hIn, {[h1 h2 h3], [h4 h5]}, hOut);
     ctrlSave(mdl, folder);

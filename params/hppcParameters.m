@@ -68,6 +68,8 @@ function hppc = hppcParameters()
 
     % ---- Q / V / PF control at the POC (RfG article 21(3)(d)) ----
     hppc.Qflag   = 1;        % 1: closed loop (PI), 0: open loop (Q_ref split over the plants)
+    hppc.QawFlag = 1;        % 1: anti-windup over the plant limits (hold the Q loop when every
+                             % plant reports its Q order at the limit, Q_sat), 0: off
     hppc.RefFlag = 0;        % 0: Q control (TSO Q_ref), 1: voltage control, 2: power factor control
     hppc.Vref    = 1.0;      % voltage set-point [pu] (0.95-1.05)
     hppc.Vslope  = 0.04;     % voltage control slope: V change for a Q change of Qmax (2-7 %)
@@ -76,7 +78,18 @@ function hppc = hppcParameters()
     hppc.Tq      = 0.2;      % Q_poc and V_poc measurement filter (>= Ts)
     hppc.TrefQ   = 0.4;      % reference filter on the Q reference in the PI error
     hppc.Kpq     = 0.1;      % Q PI, Q and PF control: proportional gain [pu Q / pu Q]
-    hppc.Kiq     = 0.5;      % Q PI, Q and PF control: integral gain [1/s]
+    hppc.Kiq     = 0.2;      % Q PI, Q and PF control: integral gain [1/s] (about 5 s: slower
+                             % than the plant Q loops, about 1 s)
+    hppc.Vlocal  = 1;        % voltage control (RefFlag 1): 1 = the plant controllers control the
+                             % busbar voltage on a V-Q droop line (fast) and the HPPC trims their
+                             % Q offsets slowly (KpVt, KiVt); 0 = the HPPC controls the POC
+                             % voltage directly (KpV, KiV; faster than the plant Q loops, so it
+                             % breaks the cascade rule)
+    hppc.KpVt    = 0;        % HPPC voltage trim (Vlocal 1), normalised gains: about 3 s
+    hppc.KiVt    = 0.3;
+    hppc.KcBusMin = 0.02;    % minimum busbar droop of the plants [pu V / pu Q on Pbase]
+    hppc.cascadeSep = 3;     % each level at least this much slower than the one under it
+                             % (warning in controllerParameters)
     % voltage control PI: gains divided by the loop gain (Vslope / Qmax + dVdQ),
     % i.e. normalised loop gains; dVdQ = 1 / SCR (pu V per pu Q on 180 MVA) is a
     % commissioning setting for the grid strength at the POC
