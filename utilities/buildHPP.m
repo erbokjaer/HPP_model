@@ -4,18 +4,25 @@ function buildHPP(opts)
 %   buildHPP()                    rebuild the top model HPP.slx for the
 %                                 asset counts N in HPP_parameters()
 %   buildHPP(All=true)            also create controller and asset models
-%                                 that do not exist yet (placeholder
-%                                 templates); existing ones are kept
-%   buildHPP(All=true, Force=true)  regenerate every controller and asset
-%                                 model from the template: OVERWRITES them,
-%                                 including any hand-made changes
-%   buildHPP(All=true, Force=true, Only="HPPC")  regenerate only the named
-%                                 models (controller names or "<type>_asset")
+%                                 that do not exist yet, from the templates;
+%                                 existing ones are never touched
+%   buildHPP(All=true, Overwrite=true, Only="HPPC")  regenerate the named
+%                                 models from their templates: OVERWRITES
+%                                 them, including all hand edits (controller
+%                                 names or "<type>_asset"; without Only: all)
+%   buildHPP(..., Strict=true)    stop if checkModels finds a problem in the
+%                                 controller / asset models (default: warn)
+%   Force=true (older option) only works together with Overwrite=true.
 %
 %   Ownership: HPP.slx is always generated (its structure depends on N), so
-%   never edit it by hand. Controller and asset models are normal,
-%   hand-maintained models once created: develop them in the Simulink
-%   editor; keep their port names and order (HPP.slx connects by port).
+%   never edit it by hand. The controller and asset models (models/ctrl,
+%   models/assets) are the source: develop them in the Simulink editor. The
+%   templates in this file only create models that are missing. Keep the
+%   port names and order (modelInterfaces.m; HPP.slx connects by port), and
+%   in block parameters that use par / ap only + - * / and field access
+%   (compute anything else in params/controllerParameters.m). checkModels
+%   checks both and runs at the start of buildHPP and of Rapid Accelerator
+%   builds.
 %
 %   Structure (see docs/design.md):
 %     models/HPP.slx                 top model: HPPC, plant controllers,
@@ -39,8 +46,27 @@ function buildHPP(opts)
 
     arguments
         opts.All (1,1) logical = false
-        opts.Force (1,1) logical = false
-        opts.Only (1,:) string = strings(1, 0)   % with All: (re)build only these models, e.g. "HPPC"
+        opts.Force (1,1) logical = false       % older option: needs Overwrite=true
+        opts.Overwrite (1,1) logical = false   % regenerate existing controller / asset models
+        opts.Only (1,:) string = strings(1, 0) % with All: create / regenerate only these models
+        opts.Strict (1,1) logical = false      % error on checkModels findings
+    end
+    if opts.Force && ~opts.Overwrite
+        error("buildHPP:overwrite", "Force=true would regenerate the controller and asset models from the " + ...
+            "templates and overwrite all hand edits. The models are the source now; to really overwrite, " + ...
+            "say so: buildHPP(All=true, Overwrite=true, Only=[...]).");
+    end
+    if opts.Overwrite && ~opts.All
+        error("buildHPP:overwriteAll", "Overwrite=true applies to the controller and asset models; use it " + ...
+            "with All=true, e.g. buildHPP(All=true, Overwrite=true, Only=""HPPC"").");
+    end
+
+    % hand edits in the controller / asset models (expressions, ports, fields)
+    findings = checkModels(Quiet=true);
+    if ~isempty(findings)
+        checkModels(Strict=opts.Strict);                % prints the report (and errors with Strict)
+        warning("buildHPP:checkModels", "checkModels found %d problem(s) in the controller / asset models " + ...
+            "(listed above). Rapid Accelerator will fall back to normal mode until they are fixed.", height(findings));
     end
 
     root = currentProject().RootFolder;
@@ -63,7 +89,7 @@ function buildHPP(opts)
             if ~isempty(opts.Only) && ~any(opts.Only == specs(k).name)
                 continue
             end
-            if opts.Force || ~isfile(fullfile(dirs.ctrl, specs(k).name + ".slx"))
+            if opts.Overwrite || ~isfile(fullfile(dirs.ctrl, specs(k).name + ".slx"))
                 if specs(k).name == "HPPC"
                     buildHppcCtrl(dirs.ctrl);           % stage 5: closed-loop P, frequency response
                 elseif specs(k).name == "WT_ctrl"
@@ -83,7 +109,7 @@ function buildHPP(opts)
             if ~isempty(opts.Only) && ~any(opts.Only == type + "_asset")
                 continue
             end
-            if opts.Force || ~isfile(fullfile(dirs.assets, type + "_asset.slx"))
+            if opts.Overwrite || ~isfile(fullfile(dirs.assets, type + "_asset.slx"))
                 buildAsset(type, dirs.assets);
             else
                 fprintf("Kept existing %s_asset.slx\n", type);
@@ -880,9 +906,7 @@ function buildHppcSub(sys)
       "meas wpp",  3, ["P_avail","P","Q","Q_sat"],            7:10,  {meas, meas, meas, flag}; ...
       "meas spp",  4, ["P_avail","P","Q","Q_sat"],            11:14, {meas, meas, meas, flag}; ...
       "meas bess", 5, ["P","Q","P_chg_max","P_dis_max","SOC","Q_sat"], 15:20, {meas, meas, meas, meas, flag, flag}};
-    hppcIn = ["P_ref","Q_ref","f_meas","P_poc","Q_poc","V_poc","P_avail_wpp","P_wpp","Q_wpp","Q_sat_wpp", ...
-              "P_avail_spp","P_spp","Q_spp","Q_sat_spp","P_chg_max_bess","P_dis_max_bess","SOC_bess", ...
-              "P_bess","Q_bess","Q_sat_bess"];
+    I = modelInterfaces();  hppcIn = I.HPPC.in;   % port order of HPPC.slx (G above uses these numbers)
     for i = 1:size(G, 1)
         [name, port, elems, ports, steps] = G{i, :};
         % BESS: bus order P, Q, P_chg_max, P_dis_max, SOC, Q_sat -> HPPC ports 18, 19, 15, 16, 17, 20
@@ -1895,10 +1919,8 @@ function buildHppcCtrl(folder)
         "plants by rating. Both PIs frozen in a voltage dip. " + ...
         "Per unit on p.ctrl.hppc.Pbase. Parameters: model argument " + ...
         "par (= p.ctrl.hppc.par, from p.hppc).", false);
-    ins = ["P_ref", "Q_ref", "f_meas", "P_poc", "Q_poc", "V_poc", "P_avail_wpp", "P_wpp", "Q_wpp", "Q_sat_wpp", ...
-           "P_avail_spp", "P_spp", "Q_spp", "Q_sat_spp", "P_chg_max_bess", "P_dis_max_bess", "SOC_bess", ...
-           "P_bess", "Q_bess", "Q_sat_bess"];
-    outs = ["P_set_wpp", "Q_set_wpp", "P_set_spp", "Q_set_spp", "P_set_bess", "Q_set_bess"];
+    I = modelInterfaces();                    % the one definition of the HPPC ports
+    ins = I.HPPC.in;  outs = I.HPPC.out;
     cm.ref  = ["P_ref", "Q_ref", "P_base", "P_target", "P_ord", "Q_refx", "Q_ff", "Q_ord", outs];
     cm.meas = ["f_meas", "P_poc", "Q_poc", "V_poc", "P_avail_wpp", "P_wpp", "Q_wpp", "P_avail_spp", ...
                "P_spp", "Q_spp", "P_chg_max_bess", "P_dis_max_bess", "SOC_bess", "P_bess", "Q_bess", ...

@@ -16,7 +16,13 @@ function out = runSweep(setName, opts)
 %                                                 60 s case. Rebuilt only when
 %                                                 the layout, time step, delays,
 %                                                 network model or a model file
-%                                                 change.
+%                                                 change. Falls back to normal
+%                                                 mode (warning with the reason,
+%                                                 see rapidTarget) when there is
+%                                                 no C compiler, with the
+%                                                 Simscape network, on
+%                                                 checkModels findings or a
+%                                                 failed build.
 %   out = runSweep(..., FastRestart=true)         normal mode, compile once and
 %                                                 reuse for all cases (about
 %                                                 8-10 s per case). Every
@@ -59,7 +65,8 @@ function out = runSweep(setName, opts)
     if opts.Network ~= "", pBase.net.solverType = opts.Network; end
     checkModelBuild(pBase);
 
-    in(height(cases)) = Simulink.SimulationInput("HPP");
+    in(height(cases)) = Simulink.SimulationInput("HPP");      % normal mode
+    inR = in;                                                  % Rapid Accelerator
     ps = cell(height(cases), 1);
     for k = 1:height(cases)
         p = applyCase(pBase, cases(k, :));
@@ -67,29 +74,48 @@ function out = runSweep(setName, opts)
         in(k) = Simulink.SimulationInput("HPP");
         in(k) = in(k).setVariable("p", p);
         in(k) = in(k).setModelParameter("StopTime", num2str(p.sim.Tstop));
-        if rapid
-            % network model and other compile-time values are in the target
-            in(k) = in(k).setModelParameter("SimulationMode", "rapid-accelerator", ...
-                "RapidAcceleratorUpToDateCheck", "off");
-        else
-            in(k) = in(k).setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
-        end
+        % network model and other compile-time values are in the rapid target
+        inR(k) = in(k).setModelParameter("SimulationMode", "rapid-accelerator", ...
+            "RapidAcceleratorUpToDateCheck", "off");
+        in(k) = in(k).setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
     end
 
     if rapid
+        % Rapid Accelerator where possible; from the first case where it is
+        % not (no compiler, Simscape network, checkModels findings, failed
+        % build: rapidTarget warns why), the rest runs in normal mode
+        out = Simulink.SimulationOutput.empty;
+        k0 = numel(in) + 1;                                    % first case in normal mode
         if opts.UseParallel
-            rapidTarget(ps{1});                      % one target for all cases (checkTunable)
-            out = parsim(in, "ShowProgress", "on", "TransferBaseWorkspaceVariables", "off");
+            st = rapidTarget(ps{1});                           % one target for all cases (checkTunable)
+            if st.ok
+                out = parsim(inR, "ShowProgress", "on", "TransferBaseWorkspaceVariables", "off");
+            else
+                k0 = 1;
+            end
         else
             % per case: rapidTarget rebuilds only if this case changes a
             % compile-time value (layout, time step, delays, network model)
-            out = Simulink.SimulationOutput.empty;
             t = tic;
             for k = 1:numel(in)
-                rapidTarget(ps{k});
-                out(k) = sim(in(k), "ShowSimulationManager", "off");
+                st = rapidTarget(ps{k});
+                if ~st.ok, k0 = k; break, end
+                out(k) = sim(inR(k), "ShowSimulationManager", "off");
                 fprintf("[%s] case %d/%d done (%.0f s)\n", setName, k, numel(in), toc(t));
             end
+        end
+        if k0 <= numel(in)
+            rest = k0:numel(in);
+            fr = fastRestartPossible(cases(rest, :));
+            how = "";  if fr, how = " with Fast Restart"; end
+            fprintf("[%s] cases %d-%d in normal mode%s instead of Rapid Accelerator.\n", setName, k0, numel(in), how);
+            if fr
+                ids = ["Simulink:Engine:NonTunableVarChangedInFastRestart", ...
+                       "Simulink:Engine:NonTunableVarChangedMaxWarnings"];
+                old = arrayfun(@(i) warning("off", i), ids);
+                restore = onCleanup(@() warning(old)); %#ok<NASGU>
+            end
+            out(rest) = sim(in(rest), "ShowProgress", "on", "UseFastRestart", onOff(fr));
         end
         saveSweep(opts.Save, out, cases, setName);
         return
@@ -128,6 +154,17 @@ end
 
 function s = onOff(b)
     if b, s = "on"; else, s = "off"; end
+end
+
+function ok = fastRestartPossible(cases)
+    % Fast Restart keeps one compiled model: only if no case changes a
+    % compile-time value (see checkTunable)
+    try
+        checkTunable(cases, "");
+        ok = true;
+    catch
+        ok = false;
+    end
 end
 
 function checkTunable(cases, setName)

@@ -1,9 +1,15 @@
-function rapidTarget(p, opts)
+function st = rapidTarget(p, opts)
 %RAPIDTARGET  Make sure the Rapid Accelerator target of HPP.slx is up to date.
 %
-%   rapidTarget(p)              build it if needed, for the compile-time
-%                               values in p
-%   rapidTarget(p, Force=true)  always rebuild
+%   st = rapidTarget(p)              build it if needed, for the compile-time
+%                                    values in p
+%   st = rapidTarget(p, Force=true)  always rebuild
+%   st = rapidTarget(p, Strict=true) error on checkModels findings
+%
+%   Returns a status struct: st.ok (true: run in Rapid Accelerator), st.reason
+%   (why not, when st.ok is false) and st.built (true if built in this call).
+%   It does not error: when Rapid Accelerator is not possible it warns with
+%   the reason, and runCase / runSweep run the case in normal mode instead.
 %
 %   The Rapid Accelerator target is HPP.slx with its referenced controller
 %   and asset models compiled into one program (MinGW). It is built once and
@@ -12,22 +18,73 @@ function rapidTarget(p, opts)
 %   rebuilt only when something fixed at compile time changes: the layout
 %   (units per plant), the time step, the communication delays, the network
 %   model, or a model file in models/ (after buildHPP or an edit).
-%   runCase and runSweep call this with Mode="rapid"; runs then use
-%   RapidAcceleratorUpToDateCheck = "off", so they skip Simulink's own
-%   (slow) check.
+%
+%   Not possible (normal mode instead), with the reason in the warning:
+%   - no C compiler selected (mex -setup C);
+%   - the Simscape network: in Rapid Accelerator its grid and network data are
+%     fixed when the program is built, so other cases would silently run with
+%     the values of the build (measured: a voltage dip and SCR 3 gave the
+%     nominal results);
+%   - checkModels finds block expressions that compiled code cannot use;
+%   - the build fails.
+%   A failure is remembered for the same compile-time values and model files,
+%   so a case set warns once.
+%
+%   Test hook: setenv("HPP_TEST_NO_COMPILER", "1") makes it behave as if no
+%   C compiler were installed.
 
     arguments
         p (1,1) struct
         opts.Force (1,1) logical = false
+        opts.Strict (1,1) logical = false
     end
-    persistent lastKey
+    persistent lastKey lastStatus
 
-    key = struct("sig", compileSignature(p), "models", modelStamp());
+    key = struct("sig", compileSignature(p), "models", modelStamp(), ...
+        "noCompilerHook", getenv("HPP_TEST_NO_COMPILER"));
     folder = fullfile(Simulink.fileGenControl("get", "CacheFolder"), "slprj", "raccel", "HPP");
-    if ~opts.Force && isequal(key, lastKey) && isfolder(folder)
+    if ~opts.Force && isequal(key, lastKey) && ~isempty(lastStatus) && (~lastStatus.ok || isfolder(folder))
+        st = lastStatus;  st.built = false;
         return
     end
 
+    st = struct("ok", false, "reason", "", "built", false);
+    if getenv("HPP_TEST_NO_COMPILER") == "1"
+        cc = [];                                          % test hook
+    else
+        cc = mex.getCompilerConfigurations("C", "Selected");
+    end
+    if isempty(cc)
+        st.reason = "no C compiler is selected (run mex -setup C; MinGW-w64 is the supported free one)";
+    elseif p.net.solverType == "simscape"
+        st.reason = "the Simscape network does not take new parameter values in Rapid Accelerator " + ...
+            "(grid and network data are fixed at build time)";
+    else
+        findings = checkModels(Quiet=true, Strict=false);
+        expr = findings(findings.Check == "expression", :);
+        if ~isempty(findings)
+            checkModels(Strict=opts.Strict);              % prints the report (errors with Strict)
+        end
+        if ~isempty(expr)
+            st.reason = sprintf("checkModels found %d block parameter(s) that compiled code cannot keep tunable " + ...
+                "(first: %s)", height(expr), expr.Block(1));
+        else
+            try
+                buildTarget(p);
+                st.ok = true;  st.built = true;
+            catch err
+                msg = strtrim(string(err.message));  msg = extractBefore(msg + newline, newline);
+                st.reason = "the build failed: " + msg;
+            end
+        end
+    end
+    if ~st.ok
+        warning("rapidTarget:fallback", "Rapid Accelerator is not possible: %s. Running in normal mode instead.", st.reason);
+    end
+    lastKey = key;  lastStatus = st;
+end
+
+function buildTarget(p)
     load_system("HPP");
     if strcmp(get_param("HPP", "FastRestart"), "on")
         set_param("HPP", "FastRestart", "off");          % Fast Restart and Rapid Accelerator exclude each other
@@ -38,17 +95,16 @@ function rapidTarget(p, opts)
     pOld = [];
     if hadP, pOld = evalin("base", "p"); end
     assignin("base", "p", p);
-    restoreP = onCleanup(@() restoreBase(hadP, pOld));
+    restoreP = onCleanup(@() restoreBase(hadP, pOld)); %#ok<NASGU>
     ws = get_param("HPP", "ModelWorkspace");
     netOld = getVariable(ws, "HPP_network");
     assignin(ws, "HPP_network", networkCode(p.net.solverType));
-    restoreNet = onCleanup(@() assignin(ws, "HPP_network", netOld));
+    restoreNet = onCleanup(@() assignin(ws, "HPP_network", netOld)); %#ok<NASGU>
 
     fprintf("Building the Rapid Accelerator target of HPP (once per layout / model change) ...\n");
     t = tic;
     Simulink.BlockDiagram.buildRapidAcceleratorTarget("HPP");
     fprintf("Rapid Accelerator target built in %.0f s\n", toc(t));
-    lastKey = key;
 end
 
 function restoreBase(hadP, pOld)

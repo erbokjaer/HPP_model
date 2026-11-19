@@ -14,6 +14,13 @@ function out = runCase(setName, caseId, opts)
 %                                             the layout, time step, delays,
 %                                             network model or a model file
 %                                             change. FastRestart does not apply.
+%                                             Falls back to normal mode with Fast
+%                                             Restart (warning with the reason)
+%                                             when there is no C compiler, with
+%                                             the Simscape network, when
+%                                             checkModels finds block parameters
+%                                             compiled code cannot use, or when
+%                                             the build fails (see rapidTarget).
 %   runCase(..., Network="nodal")             network model for this run:
 %                                             "nodal" (fast nodal solver) or
 %                                             "simscape" (Simscape Electrical,
@@ -55,21 +62,31 @@ function out = runCase(setName, caseId, opts)
     checkModelBuild(p);
     fprintf("Running %s, case %d%s, %s network\n", setName, k, nameSuffix(caseName), p.net.solverType);
 
+    % Rapid Accelerator if possible; otherwise (no compiler, Simscape network,
+    % checkModels findings, failed build: rapidTarget warns why) normal mode
+    % with Fast Restart
+    mode = opts.Mode;  useFR = opts.FastRestart;
+    if mode == "rapid"
+        st = rapidTarget(p);
+        if ~st.ok
+            mode = "normal";  useFR = true;
+            fprintf("Normal mode (Fast Restart) instead of Rapid Accelerator.\n");
+        end
+    end
+
     in = Simulink.SimulationInput("HPP");
     in = in.setVariable("p", p);
-    in = in.setModelParameter("SimulationMode", modeName(opts.Mode), ...
+    in = in.setModelParameter("SimulationMode", modeName(mode), ...
                               "StopTime", num2str(p.sim.Tstop));
-
-    if opts.Mode == "rapid"
+    if mode == "rapid"
         % compiled program, built once per layout / model change (rapidTarget);
         % the network model and other compile-time values are in the target
-        rapidTarget(p);
         in = in.setModelParameter("RapidAcceleratorUpToDateCheck", "off");
     else
         in = in.setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
     end
 
-    if opts.FastRestart && opts.Mode == "normal"
+    if useFR && mode == "normal"
         load_system("HPP");
         sig = compileSignature(p);
         if ~isequal(sig, lastSignature) && strcmp(get_param("HPP", "FastRestart"), "on")
@@ -83,7 +100,7 @@ function out = runCase(setName, caseId, opts)
                "Simulink:Engine:NonTunableVarChangedMaxWarnings"];
         old = arrayfun(@(i) warning("off", i), ids);
         restore = onCleanup(@() warning(old));
-    elseif opts.Mode ~= "rapid" && bdIsLoaded("HPP") && strcmp(get_param("HPP", "FastRestart"), "on")
+    elseif mode ~= "rapid" && bdIsLoaded("HPP") && strcmp(get_param("HPP", "FastRestart"), "on")
         set_param("HPP", "FastRestart", "off");
         lastSignature = [];
     end
@@ -96,7 +113,7 @@ function out = runCase(setName, caseId, opts)
             mkdir(folder);
         end
         caseInfo = struct("set", setName, "index", k, "name", caseName, ...
-                          "row", cases(k, :));
+                          "row", cases(k, :), "mode", mode);
         f = fullfile(folder, sprintf("case_%03d.mat", k));
         save(f, "out", "p", "caseInfo");
         fprintf("Saved %s\n", f);
