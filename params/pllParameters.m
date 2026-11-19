@@ -17,20 +17,26 @@ function pll = pllParameters()
 %   asset: the PLL of every asset converter; the current is injected along
 %     its angle. on = 0: ideal (the angle of the terminal voltage of the
 %     previous step, as before stage 7).
-%   meas:  the frequency measurement of the HPPC (POC voltage) and the plant
-%     controllers (33 kV busbar voltage): the PLL frequency averaged over
-%     Tavg, and RoCoF over Trocof (ENTSO-E: 500 ms). on = 0: the system
-%     frequency of the Grid frequency block, unfiltered (as before stage 7).
+%   hppc, wppc, sppc, bessc: the frequency meter of each controller, its
+%     own PLL: the HPPC on the POC voltage, each plant controller on the
+%     33 kV busbar voltage. Separate parameters, since in a real plant each
+%     controller (vendor) has its own meter. The PLL frequency is averaged
+%     over Tavg for control; RoCoF over Trocof (ENTSO-E: 500 ms). on = 0:
+%     the system frequency of the grid, unfiltered (as before stage 7).
 
     pll.asset.on   = 1;      % 1: PLL, 0: ideal (aligned with the terminal voltage)
     pll.asset.fBW  = 5;      % [Hz] natural frequency of the loop (bandwidth)
     pll.asset.zeta = 0.707;  % [-]  damping
     pll.asset.Tpre = 0.02;   % [s]  moving-average prefilter on the phasor (0 = off, max 0.05)
 
-    pll.meas.on     = 1;     % 1: measured (PLL), 0: system frequency
-    pll.meas.fBW    = 5;     % [Hz]
-    pll.meas.zeta   = 0.707; % [-]
-    pll.meas.Tpre   = 0.02;  % [s]  prefilter (0 = off, max 0.05)
-    pll.meas.Tavg   = 0.02;  % [s]  averaging of the PLL frequency for control (max 0.05)
-    pll.meas.Trocof = 0.5;   % [s]  RoCoF window (max 1)
+    meter.on     = 1;        % 1: measured (PLL), 0: system frequency
+    meter.fBW    = 5;        % [Hz]
+    meter.zeta   = 0.707;    % [-]
+    meter.Tpre   = 0.02;     % [s]  prefilter (0 = off, max 0.05)
+    meter.Tavg   = 0.02;     % [s]  averaging of the PLL frequency for control (max 0.05)
+    meter.Trocof = 0.5;      % [s]  RoCoF window (max 1)
+    pll.hppc  = meter;       % HPPC, POC voltage
+    pll.wppc  = meter;       % wind plant controller, busbar voltage
+    pll.sppc  = meter;       % PV plant controller, busbar voltage
+    pll.bessc = meter;       % BESS plant controller, busbar voltage
 end

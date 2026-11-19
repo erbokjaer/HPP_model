@@ -9,7 +9,8 @@ function p = deriveParameters(p)
 %     p.wt.ap, p.pv.ap, p.bess.ap   per-instance arguments of the asset
 %                          models (N-by-1 struct arrays); HPP.slx passes
 %                          p.<type>.ap(k) to asset instance k
-%     p.pll.asset, .meas   PLL gains kp, ki and window lengths in steps
+%     p.pll.asset, .hppc, .wppc, .sppc, .bessc   PLL gains kp, ki and
+%                          window lengths in steps
 
     for t = ["wt", "pv", "bess"]
         p.(t).N      = p.(t).nFeeders * p.(t).nPerFeeder;
@@ -31,13 +32,13 @@ function p = deriveParameters(p)
     % PLL gains and window lengths in steps (pllParameters): kp = 2 zeta wn,
     % ki = wn^2; windows as whole steps, within the fixed buffer sizes of
     % the PLL code (pllBody in buildHPP: 50 steps, RoCoF 1000 steps)
-    for g = ["asset", "meas"]
+    for g = ["asset", "hppc", "wppc", "sppc", "bessc"]
         q = p.pll.(g);
         wn = 2 * pi * q.fBW;
         q.kp = 2 * q.zeta * wn;
         q.ki = wn^2;
         q.Npre = max(1, round(q.Tpre / p.sim.Ts));
-        if g == "meas"
+        if g ~= "asset"
             q.Navg = max(1, round(q.Tavg / p.sim.Ts));
             q.Nroc = max(1, round(q.Trocof / p.sim.Ts));
         else
