@@ -253,7 +253,6 @@ function buildTop(p, folder)
         offset = offset + p.(plants(i).t).N;
     end
     buildNetworkVariants(m + "/Network", p);       % nodal and Simscape, chosen per run
-    buildGridFrequency(m + "/Grid frequency");     % imposed or swing equation
     buildLogging(m + "/Logging");
 
     % ---- fixed top-level layout (left to right), before drawing lines ----
@@ -273,8 +272,6 @@ function buildTop(p, folder)
     setPos(m + "/Network", [990, yI - D/2, 1190, yI - D/2 + 3*D]);
     yT = portY(m + "/HPP controller", "in", 1);
     setPos(m + "/TSO", [20, yT - 35, 120, yT + 35]);
-    yN = get_param(m + "/Network", "Position");
-    setPos(m + "/Grid frequency", [990, yN(4) + 120, 1190, yN(4) + 200]);
     setPos(m + "/Logging", [1510 60 1630 60 + numel(logSignalNames())*36]);
 
     % block colours by role: controllers blue, plants green, network grey
@@ -299,9 +296,7 @@ function buildTop(p, folder)
     gotoFrom(m, "TSO/1", "Logging/5", "tso", grey, "TSO");
     gotoFrom(m, "BESS plant/1", ["HPP controller/5", "Logging/4"], "meas_bess", orange, "meas bess");
     gotoFrom(m, "Network/1", ["Wind plant/2", "PV plant/2", "BESS plant/2", "Logging/1"], "network", green, "network");
-    gotoFrom(m, "Network/2", ["HPP controller/2", "Logging/2", "Grid frequency/1"], "POC_meas", green, "POC meas");
-    gotoFrom(m, "Grid frequency/1", ["TSO/1", "Network/4"], "f_grid", green, "f");
-    gotoFrom(m, "Grid frequency/2", "Network/5", "theta_grid", green, "theta");
+    gotoFrom(m, "Network/2", ["HPP controller/2", "Logging/2"], "POC_meas", green, "POC meas");
     % BESS set-point for logging: short branch off the set-point bus to a
     % Goto just above the line (below it is the plant's network From)
     yb = portY(m + "/HPP controller", "out", 3);
@@ -346,8 +341,9 @@ function buildTSO(sys)
     add_block("simulink/Signal Routing/Bus Creator", sys + "/TSO bus", "Inputs", "3", ...
         "Position", [260 40 265 160]);
     for j = 1:3
-        if names(j) == "f_meas"   % grid frequency from the Grid frequency block
-            add_block("simulink/Sources/In1", sys + "/" + names(j), "Port", "1", "Position", [0 0 30 14]);
+        if names(j) == "f_meas"   % grid frequency with the optional step (p.grid.fev)
+            add_block("simulink/Sources/Step", sys + "/" + names(j), "Time", "p.grid.fev.t0", ...
+                "Before", "1", "After", "1 + p.grid.fev.df", "SampleTime", "0", "Position", [0 0 90 26]);
         elseif names(j) == "P_ref"   % power reference with the optional step (p.grid.Pstep)
             add_block("simulink/Sources/Step", sys + "/" + names(j), "Time", "p.grid.Pstep.t0", ...
                 "Before", "p.grid.Pref", "After", "p.grid.Pref + p.grid.Pstep.dP", "SampleTime", "0", ...
@@ -363,7 +359,7 @@ function buildTSO(sys)
     end
     add_block("simulink/Sinks/Out1", sys + "/TSO", "Port", "1", "Position", [0 0 30 14]);
     rowFrom(sys, "TSO bus/1", "TSO", "", 50);
-    set_param(sys, "Description", "TSO / market set-points: P_ref [W], Q_ref [var]; f_meas [pu] passed on from the Grid frequency block.");
+    set_param(sys, "Description", "TSO / market set-points: P_ref [W], Q_ref [var], f_meas [pu].");
     hideStructuralNames(sys);
 end
 
@@ -425,8 +421,7 @@ function buildNetwork(sys)
         "Zg = complex(Zg_ri(1), Zg_ri(2));"
         "I = complex(zeros(n, 1), zeros(n, 1));"
         "I(1:nA) = complex(I_re(:), I_im(:));"
-        "Ec = E * exp(1i * theta);                 % grid source, rotated by the grid angle (Grid frequency)"
-        "I(net.poc) = I(net.poc) + Ec / Zg;        % grid Norton source at the POC (E: grid voltage, incl. dips)"
+        "I(net.poc) = I(net.poc) + E / Zg;         % grid Norton source at the POC (E: grid voltage, incl. dips)"
         "V = Z * I;"
         "V_re = real(V(1:nA));"
         "V_im = imag(V(1:nA));"
@@ -442,11 +437,10 @@ function buildNetwork(sys)
         "end"
         "V_bus = abs(Vb);"
         "Vp = V(net.poc);"
-        "Spoc = Vp * conj((Vp - Ec) / Zg);         % power into the grid"
+        "Spoc = Vp * conj((Vp - E) / Zg);          % power into the grid"
         "P_poc = real(Spoc);  Q_poc = imag(Spoc);  V_poc = abs(Vp);"];
-    ins = ["I_re", "I_im", "E", "Zre", "Zim", "Zg_ri", "brZre", "brZim", "brB", "theta"];
-    add_block("simulink/Sources/In1", sys + "/theta", "Port", "5", "Position", [0 0 30 14]);
-    addMatlabFunction(sys + "/solve", "solve", ins, outs, body, "net", [0 0 160 360]);
+    ins = ["I_re", "I_im", "E", "Zre", "Zim", "Zg_ri", "brZre", "brZim", "brB"];
+    addMatlabFunction(sys + "/solve", "solve", ins, outs, body, "net", [0 0 160 330]);
     % the structure (node indices) stays fixed at compile time; the numbers
     % (impedances, charging, grid) are tunable constants, so grid strength,
     % cable and transformer data change without recompiling
@@ -458,7 +452,7 @@ function buildNetwork(sys)
     end
     outTags = ["V_re", "V_im", "P_plant_pu", "Q_plant_pu", "V_bus", "P_poc_pu", "Q_poc_pu", "V_poc"];
     outsS = [num2cell((2:8)'), num2cell(outTags(2:8)')];
-    sidesS = [{2, "@I_im"; 3, "@E"}; num2cell((4:9)'), num2cell(ins(4:9)'); {10, "theta"}];
+    sidesS = [{2, "@I_im"; 3, "@E"}; num2cell((4:9)'), num2cell(ins(4:9)')];
     rowsS = {[stg("@I_re", 0), stg("solve", 1, sidesS, outsS), stg(">" + outTags(1))]};
     [~, hS, rS] = ctrlSection(sys, "Network solution, V = Z (I_inj + I_grid)", rowsS, rIn + 90, 20, cm, areaColor("asset"));
 
@@ -469,7 +463,8 @@ function buildNetwork(sys)
     for s = ["P_plant", "Q_plant", "P_poc", "Q_poc"]
         nb(sys, "gain", s + " to SI", "Gain", "net.Sb");
     end
-    add_block("simulink/Sources/In1", sys + "/f grid", "Port", "4", "Position", [0 0 30 14]);
+    add_block("simulink/Sources/Step", sys + "/f grid", "Time", "p.grid.fev.t0", ...
+        "Before", "1", "After", "1 + p.grid.fev.df", "SampleTime", "0", "Position", [0 0 30 30]);
     add_block("simulink/Signal Routing/Bus Creator", sys + "/network bus", "Inputs", "6", "Position", [0 0 6 300]);
     add_block("simulink/Signal Routing/Bus Creator", sys + "/POC bus", "Inputs", "3", "Position", [0 0 6 150]);
     add_block("simulink/Sinks/Out1", sys + "/network", "Port", "1", "Position", [0 0 30 14]);
@@ -2434,69 +2429,11 @@ function buildNetworkVariants(sys, p)
     for i = 1:3
         add_block("simulink/Sources/In1", sys + "/I " + tags(i), "Port", num2str(i), "Position", [40 40*i 70 40*i+14]);
     end
-    add_block("simulink/Sources/In1", sys + "/f grid", "Port", "4", "Position", [40 160 70 174]);
-    add_block("simulink/Sources/In1", sys + "/theta", "Port", "5", "Position", [40 200 70 214]);
     add_block("simulink/Sinks/Out1", sys + "/network", "Port", "1", "Position", [520 60 550 74]);
     add_block("simulink/Sinks/Out1", sys + "/POC meas", "Port", "2", "Position", [520 120 550 134]);
     set_param(sys, "VariantActivationTime", "update diagram", "Description", ...
         "Network model, chosen per run: Nodal (HPP_network = 1, fast nodal solver) or Simscape " + ...
         "(HPP_network = 2, Simscape Electrical in frequency-and-time mode). See runCase, option Network.");
-end
-
-function buildGridFrequency(sys)
-    % Grid frequency f [pu] and grid source angle theta [rad] (stage 6):
-    % imposed (p.grid.fev step + p.grid.fprof profile) or a swing equation
-    % of an aggregated system behind the grid impedance (p.grid.sys.swing =
-    % 1), driven by a disturbance and the change of P_poc. theta rotates the
-    % grid source in the network (frame at f0). Masked: parameter g =
-    % p.grid (tunable). In: POC measurements (P_poc, one step old). Out:
-    % 1 f, 2 theta.
-    newSubsystem(sys);
-    add_block("simulink/Sources/In1", sys + "/POC meas", "Port", "1", "Position", [20 40 50 54]);
-    add_block("simulink/Signal Routing/Bus Selector", sys + "/POC sel", "Position", [100 30 105 70]);
-    set_param(sys + "/POC sel", "OutputSignals", "P_poc");
-    add_block("simulink/Discrete/Memory", sys + "/P_poc prev", "InitialCondition", "0", "Position", [150 35 180 65]);
-    add_block("simulink/Sources/Digital Clock", sys + "/t", "SampleTime", "p.sim.Ts", "Position", [140 100 180 130]);
-    add_block("simulink/Sources/Constant", sys + "/Ts", "Value", "p.sim.Ts", "SampleTime", "p.sim.Ts", "Position", [140 160 180 190]);
-    body = [
-        "% state: frequency deviation w, governor xg, mechanical power Pm, angle"
-        "persistent w xg Pm Phold th"
-        "if isempty(w), w = 0; xg = 0; Pm = 0; Phold = P_poc; th = 0; end"
-        "s = g.sys;"
-        "if s.swing > 0.5"
-        "    if t < s.tOn"
-        "        Phold = P_poc;                       % balanced at tOn"
-        "    else"
-        "        dPh = (P_poc - Phold) / s.Ssys;       % HPP change, pu on Ssys"
-        "        dPd = s.dist.dP * (t >= s.dist.t0);"
-        "        dw  = (Pm + dPh - dPd - s.D * w) / (2 * s.H);"
-        "        dxg = (-w / s.R - xg) / s.Tg;"
-        "        dPm = (xg - Pm) / s.Tt;"
-        "        w = w + Ts * dw;  xg = xg + Ts * dxg;  Pm = Pm + Ts * dPm;"
-        "    end"
-        "    f = 1 + w;"
-        "else"
-        "    f = 1 + g.fev.df * (t >= g.fev.t0) + interp1(g.fprof.t, g.fprof.df, t, 'linear', 0);"
-        "end"
-        "th = th + 2 * pi * g.f0 * (f - 1) * Ts;"
-        "th = mod(th + pi, 2 * pi) - pi;"
-        "theta = th;"];
-    addMatlabFunction(sys + "/frequency", "grid_frequency", ["P_poc", "t", "Ts"], ["f", "theta"], body, "g", [240 40 400 190]);
-    add_block("simulink/Sinks/Out1", sys + "/f", "Port", "1", "Position", [470 60 500 74]);
-    add_block("simulink/Sinks/Out1", sys + "/theta", "Port", "2", "Position", [470 150 500 164]);
-    ln(sys, "POC meas/1", "POC sel/1", "");
-    ln(sys, "POC sel/1", "P_poc prev/1", "P_poc");
-    ln(sys, "P_poc prev/1", "frequency/1", "");
-    ln(sys, "t/1", "frequency/2", "");
-    ln(sys, "Ts/1", "frequency/3", "");
-    ln(sys, "frequency/1", "f/1", "f");
-    ln(sys, "frequency/2", "theta/1", "theta");
-    mk = Simulink.Mask.create(sys);
-    mk.addParameter("Name", "g", "Prompt", "Grid data", "Value", "p.grid", "Evaluate", "on", "Tunable", "on");
-    mk.Description = "Grid frequency [pu] and angle [rad]: imposed (p.grid.fev, p.grid.fprof) or " + ...
-        "swing equation (p.grid.sys.swing = 1). See params/gridParameters.m.";
-    mk.Display = "disp('grid frequency')";
-    set_param(sys, "BackgroundColor", areaColor("interface"));
 end
 
 function buildNetworkSimscape(sys, p)
@@ -2635,9 +2572,9 @@ function buildNetworkSimscape(sys, p)
         "After", "p.grid.dip.depth", "SampleTime", "0", "Position", [0 0 30 30]);
     nb(sys, "sum", "E grid", "Inputs", "+-+");  set_param(sys + "/E grid", "Position", [0 0 30 110]);
     nb(sys, "gain", "to V", "Gain", "p.grid.Vpoc");
-    add_block("simulink/Sources/In1", sys + "/theta", "Port", "5", "Position", [0 0 30 14]);   % grid angle (Grid frequency)
+    add_block("simulink/Sources/Constant", sys + "/E phase", "Value", "0", "Position", [0 0 40 24], "ShowName", "off");
     rows = {[stg("E0", 0), stg("E grid", 1, {2, "dip start"; 3, "dip end"}), stg("to V"), stg(">E_mag")]
-            [stg("theta", 0), stg(">E_ph")]};
+            [stg("E phase", 0), stg(">E_ph")]};
     [yG, hDip] = ctrlSection(sys, "Grid voltage E with dips (line rms) and phase", rows, xH + 40, 20, cm, areaColor("interface"));
 
     % (2) HPP bus -- HPP transformer -- POC meter -- Zg -- E
@@ -2720,7 +2657,8 @@ function buildNetworkSimscape(sys, p)
     add_block("simulink/Discrete/Memory", sys + "/V_im prev", "InitialCondition", "zeros(" + nA + ",1)", "Position", [0 0 30 30]);
     add_block("simulink/Signal Routing/Mux", sys + "/P_plant all", "Inputs", "3", "Position", [0 0 6 90]);
     add_block("simulink/Signal Routing/Mux", sys + "/Q_plant all", "Inputs", "3", "Position", [0 0 6 90]);
-    add_block("simulink/Sources/In1", sys + "/f grid", "Port", "4", "Position", [0 0 30 14]);
+    add_block("simulink/Sources/Step", sys + "/f grid", "Time", "p.grid.fev.t0", "Before", "1", ...
+        "After", "1 + p.grid.fev.df", "SampleTime", "0", "Position", [0 0 30 30]);
     add_block("simulink/Signal Routing/Bus Creator", sys + "/network bus", "Inputs", "6", "Position", [0 0 6 300]);
     add_block("simulink/Signal Routing/Bus Creator", sys + "/POC bus", "Inputs", "3", "Position", [0 0 6 150]);
     add_block("simulink/Sinks/Out1", sys + "/network", "Port", "1", "Position", [0 0 30 14]);

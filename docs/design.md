@@ -378,14 +378,6 @@ In the nodal (RMS) solver, voltage sources enter as Norton equivalents (E/Z as a
 - Validation: nadir, RoCoF and settling frequency for a known ΔP, H, R, D against the analytic solution, with the HPP response off; then with LFSM / FSM on.
 - Measured frequencies (POC for the HPPC, busbar for the plant controllers) come from the network through measurement PLLs (stage 7); until then from the grid machine.
 
-**Status (2026-11-19): built, except the Energinet profiles.** New top-level block `Grid frequency` (`buildGridFrequency` in `buildHPP.m`, masked, parameter `g = p.grid`, tunable): one MATLAB Function with the swing equation (forward Euler at `p.sim.Ts`) and the imposed frequency (step `p.grid.fev` plus a 10-point profile `p.grid.fprof`, for the Energinet test profiles). Outputs f [pu] to the TSO bus (HPPC `f_meas`) and to the network bus (plant controllers), and the grid angle theta, which rotates the grid source in both network models (nodal: E·e^jθ in the Norton source; Simscape: phase input). P_poc enters one step old. Parameters `p.grid.sys` (`swing` 0 / 1, `Ssys` 2 GW, `H` 4 s, `D` 1, `R` 0.2, `Tg` 0.5 s, `Tt` 5 s, `tOn` 39 s, `dist.t0` 40 s, `dist.dP`). The system is taken as balanced at `tOn`: the HPP ramps up from start until about 38 s, so an earlier `tOn` shifts the frequency (+0.03 Hz with 30 s). Case set `sys_freq`.
-
-Checks (default layout, Rapid Accelerator, 16 s for the 6 cases of 90 s):
-- Imposed mode: nominal identical to the saved results; `freq_step` within 0.1 MW (the grid angle now rotates with the imposed frequency, a one-step lag of the asset current angle).
-- Swing equation against the analytic solution of the same linear system (loss of 3.5 %, HPP frequency response off): within 0.2 mHz. Nadir 49.425 Hz after 4.9 s, settles at 49.709 Hz, initial RoCoF −0.219 Hz/s (−0.177 Hz/s averaged over the first 0.5 s).
-- With the HPP: LFSM-U (default) +5.1 MW, nadir 49.536 Hz (+0.11 Hz), final 49.729 Hz; FSM +16.7 MW, nadir 49.635 Hz (+0.21 Hz), final 49.780 Hz; FSM with H 2 s: RoCoF −0.33 Hz/s, nadir 49.555 Hz. Load drop 3.5 %: LFSM-O −5.1 MW, peak 50.463 Hz.
-- Not yet: the Energinet profiles in `p.grid.fprof` (values to be taken from Energinet's verification documents); frequency-dependent reactances in the RMS network (optional); measured frequency (stage 7: until then the controllers get the system frequency directly, the HPPC without delay).
-
 ### 14.4 Stage 7: PLLs
 
 - One SRF-PLL per asset (error from the angle of the terminal voltage, PI, θ and f) with tunable bandwidth and damping; the asset injects its current along the PLL angle. Measurement PLLs (or filters with a window) for the plant controllers and the HPPC.

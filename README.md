@@ -119,7 +119,6 @@ A case set is a function in `scripts/+caseSets/` that returns a table. Each colu
 | `hppc_qv` | Q steps ±30 Mvar, voltage control after a 2 % grid voltage drop (slopes 2 / 4 / 7 %, SCR 10 / 3, mis-set SCR), Q control in the same event, `Vref 1.01`, `PF 0.95 export` / `import` (events at 40 s) | `caseList` |
 | `hppc_p` | `Pref 150 MW`, `step -30 MW`, `step +20 MW`, `step +40 MW (limit)`, `step -30 MW, 10 %/min`, `step -30 MW, no ramp` (P_ref step at 40 s, 120 s runs) | `caseList` |
 | `bess_soc` | `SOC0 0.5`, `SOC0 0.15`, `at SOCmin`, `SOC0 0.85`, `at SOCmax`, `SOC0 0.5, +20 MW`, `SOC0 0.15, +20 MW` | `caseList` |
-| `sys_freq` | swing-equation grid (`p.grid.sys.swing = 1`, 2 GW Nordic-like): `swing, no event`, loss of 3.5 % with the HPP response off / LFSM / FSM / FSM at H 2 s, `load drop 3.5 %, LFSM` (event at 40 s, 90 s runs) | `caseList` |
 
 To add a set, copy one of these files, rename it and edit it. Nothing else needs to change. Three helpers build the table:
 
