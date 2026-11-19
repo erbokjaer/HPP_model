@@ -7,7 +7,7 @@ Values marked *typical* are starting points to be replaced by project data.
 
 | Topic | Decision |
 |---|---|
-| Simulation type in Simulink | **Three tiers behind one asset–network interface** (section 14): **RMS** (positive-sequence phasor, today's model, for sweeps), **dq** (network as a state-space model in a 50 Hz dq frame, for frequency, PLL, GFM and weak-grid studies; planned) and **EMT** (Simscape time mode or PSCAD with the controller DLLs, for validation). |
+| Simulation type in Simulink | **RMS (positive-sequence phasor)**. EMT validation is done in PSCAD. |
 | Which controllers become DLLs | **All controllers**: HPP controller, the three plant controllers and the three asset controllers. They are our own models, not vendor DLLs. |
 | Number of assets | **Per plant: `nFeeders` × `nPerFeeder` units**, each its own asset instance (converter model and controller) at its own network node, so N = nFeeders · nPerFeeder. Default layout: wind 1 × 2, PV 2 × 1, BESS 1 × 1 (N = 2 / 2 / 1). |
 | Asset model standards | Wind: **IEC 61400-27-1 Ed. 2, Type 4** (full converter). PV and BESS: **WECC second-generation generic models** (REGC / REEC / REPC). |
@@ -279,8 +279,7 @@ Afterwards: code generation of every controller (needs the Coder products and a 
 - **WPPC:** uses the WECC REPC_A structure; the IEC 61400-27-1 WPP control model is a later refinement.
 - **Checks against the standard texts:** IEC Type 4A block details (filter forms, dip logic with hysteresis / post-fault hold, `Kqv` reference, current-limit options, `uqdip` / `Mqfrt` modes) and the WECC simplifications listed in stage 4 (VDL1/VDL2, state freeze and `Thld` during a dip, Pflag, high-voltage reactive current management, `Tfltr` in REGC_A, rate limits on the state). All parameter values are typical, not from a specific turbine or inverter.
 - **Spike at fault clearing:** the network with one-step-delayed current sources gives a single-step spike when a dip clears (Q_poc ≈ 125 Mvar for one step). A smaller step or a filter on the network voltage would remove it.
-- **Steady-state initialisation** at start-up (controllers currently start from zero measurements). More important with the dq tier (section 14), where settling time costs 20–50 times more.
-- **Frequency, PLL, GFM and the dq / EMT tiers:** planned in section 14 (stages 6–9), with the questions still open listed there.
+- **Steady-state initialisation** at start-up (controllers currently start from zero measurements).
 - **Tap changer and reactive compensation** (STATCOM, shunt reactors): not modelled yet (section 5).
 - **Simulation speed:** solved for the nodal network with Rapid Accelerator (section 13). The Simscape network does not work in Rapid Accelerator (parameter changes ignored) and runs in normal mode, at 107–127 s per 60 s case with the default layout; the reason it is slower than the ~40 s measured earlier (layout, machine load) is not measured yet.
 - **Code generation and PSCAD** (after stage 5): MATLAB Coder, Embedded Coder and MinGW installed 2026-11-19; Simulink Coder (needed to generate code from Simulink models) is being added. The controller blocks already use only tunable block expressions (section 13).
@@ -334,87 +333,3 @@ With MinGW (and MATLAB / Embedded Coder) installed, the model can be compiled. M
 **Tunable block expressions.** Compiled code (accelerator, Rapid Accelerator, the later DLLs) keeps a block parameter that uses a model argument (`par`, `ap`) tunable only if it is simple arithmetic (+ − × ÷). The first builds failed on `par.PF^2`, `sqrt`, comparisons (`par.RefFlag == 1`, `double(par.MqG == 1)`) and a Transfer Fcn denominator `[ap.gen.Tg 1]`. Fixed by computing derived values in `controllerParameters` (`par.tanphi`, `par.isV`, `par.isPF`, `par.KpQ`, `par.KiQ`, `par.MqG1`) and building the converter current lags from gain 1/Tg and an integrator (`contLag` in `buildHPP.m`, the same dynamics). Expressions inside MATLAB Function code are not affected.
 
 **Run Build (`buildfile.m`, 2026-11-19).** The project's Run Build button and `buildtool` run five tasks, each depending on the one before, so the chain stops at the first failure: `check` (`checkModels(Strict=true)`) → `model` (`buildHPP()`) → `rapid`, the default (`rapidTarget(HPP_parameters())`, errors with `st.reason` when Rapid Accelerator is not possible) → `sweeps` (`runSweep(..., Mode="rapid")` for nominal, freq_step, hppc_p, hppc_qv, wt_frt, bess_soc, the sets of the report figures) → `figures` (`plotAllResults(Purpose="report")`). `model` declares its inputs (`params/*.m`, `utilities/buildHPP.m`, `utilities/modelInterfaces.m`, `models/ctrl/*.slx`, `models/assets/*.slx`) and its output `models/HPP.slx`, so buildtool skips it when nothing changed; `sweeps` and `figures` declare theirs the same way. Measured: first run (check, model, rapid) 341 s, of which the Rapid build 142 s; second run 61 s with `model` skipped as up to date. `buildtool -tasks` lists the tasks; the cache `.buildtool/` is in `.gitignore`.
-
-## 14. Frequency dynamics, PLLs, GFM and simulation tiers  (planned, 2026-11-19)
-
-Goal: study how the HPP and the power system respond to each other in frequency, with grid-following (GFL) converters with real PLLs and later grid-forming (GFM) converters. The grid frequency today is an imposed signal (`p.grid.fev`, a step) and every asset is a current source aligned with the terminal voltage of the previous step (an ideal PLL in disguise). Both have to become dynamic.
-
-### 14.1 Three simulation tiers
-
-| Tier | Network | Converters | Step | Use | Run time per 60 s case (estimate) |
-|---|---|---|---|---|---|
-| **RMS** (today) | algebraic V = Z·I at 50 Hz (nodal solver) | IEC / WECC RMS models | 1 ms | sweeps, dispatch, grid code, frequency events | 1.5–3 s (measured 1.5 s without stages 6–7) |
-| **dq** (planned) | linear state-space RLC network in a dq frame, discretized | averaged converters with inner dq current loop, PLL or GFM control | 50–100 µs (controllers keep their rates) | swing dynamics, PLLs, GFM, weak grid, balanced faults | 10–50 s; a 10 s event window 3–8 s |
-| **EMT** | three-phase instantaneous (Simscape time mode, or PSCAD) | averaged (or switching) converter models; the controllers as DLLs in PSCAD | 10–20 µs | validation of critical cases, unbalanced faults, harmonics, protection | Simscape 15–60 min (normal mode only), PSCAD 2–20 min |
-
-The controllers (HPPC, plant controllers, asset controllers) are the same models in every tier; only the network variant and the converter models underneath change. This keeps the DLL path intact. The tier is chosen per run like the network model today (Variant Subsystem, setting in `p`, option in `runCase` / `runSweep` / `main.m`). The run times are estimates scaled from the RMS tier; they are measured once stage 6 and a dq prototype run.
-
-**Accuracy.** For a balanced network of lumped R, L, C with averaged converters, the dq model is an exact transform of the EMT equations; the only difference is the integration error. dq misses what positive-sequence averaged models cannot carry: unbalanced faults and negative-sequence control, the 100 Hz PLL ripple under unbalance, switching harmonics, saturation and inrush, frequency-dependent cable models; trapezoidal discretization lowers resonance frequencies (a 2 kHz resonance appears at 1.94 kHz with 50 µs, 1.79 kHz with 100 µs). RMS also drops the network's electromagnetic dynamics: it is accurate below about 5 Hz (frequency control, swing dynamics, inertia, FFR, Q / V loops) but optimistic for fast PLLs and GFM in weak grids, where the network's inductive dynamics add phase lag that RMS does not have. Validation plan: the same balanced cases (frequency event, PLL bandwidth sweep, balanced fault) in all three tiers with averaged converters; RMS against dq shows where RMS stops being valid, dq against EMT confirms the dq model.
-
-| Dynamics (rough range) | RMS | dq | EMT |
-|---|---|---|---|
-| Dispatch, ramps, SOC, governors (< 0.1 Hz) | ✔ | ✔ | ✔ |
-| Swing, inertia, nadir, FFR, Q / V loops (0.1–5 Hz) | ✔ | ✔ | ✔ |
-| Slow PLLs (≤ ~10 Hz), FRT current injection | ≈ | ✔ | ✔ |
-| Fast PLL, weak-grid instability, GFM–network interaction (10 Hz – 1 kHz) | ✘ | ✔ | ✔ |
-| Resonances > 1 kHz, harmonics, switching | ✘ | ≈ / ✘ | ✔ |
-| Unbalanced faults | ✘ | ✘ (without a negative-sequence network) | ✔ |
-
-### 14.2 Common reference frame and asset–network interface
-
-All tiers use one reference frame rotating at ω0 = 2π·50 rad/s. Every source has its own angle θ in that frame and its frequency f = 50 + (dθ/dt)/2π. The interface between an asset and the network becomes, per instance:
-- **GFL:** current phasor (d, q) in the common frame, injected along the asset's PLL angle;
-- **GFM:** internal voltage (d, q) behind an impedance (filter / virtual), with the angle from the GFM control;
-- back from the network: the terminal voltage (d, q) in the common frame.
-Frequencies that controllers use are measured (PLL) in every tier; no controller reads the system frequency directly.
-
-In the nodal (RMS) solver, voltage sources enter as Norton equivalents (E/Z as a current injection, Z added to Y), so the grid machine, GFL and GFM sources all stay in the one V = Z·I step. The frame at ω0 drifts with the system frequency (0.2 Hz for 60 s is 12 turns); angles are wrapped.
-
-### 14.3 Stage 6: grid frequency model (swing equation)
-
-- The grid equivalent becomes a voltage source behind the grid impedance (SCR, X/R as now) whose angle comes from an aggregated system: 2H·dΔω/dt = ΔPm − ΔPe − ΔPdist − D·Δω, Δθ̇ = ω0·Δω. ΔPm from an aggregated governor (droop R, turbine lag; option reheat), ΔPdist a load step or loss of infeed (time, size), ΔPe includes the HPP's change in output, so the plant's response feeds back.
-- Parameters (new `p.grid.sys`, typical): system rating Ssys, inertia H, load damping D, governor droop R and time constants, disturbance. Option: frequency imposed as now (for grid-code tests) or ramps / RoCoF / recorded profiles, so the current case sets keep working.
-- RMS tier: reactances at the measured frequency (X = ω·L) as an option, and frequency-dependent load through D.
-- Validation: nadir, RoCoF and settling frequency for a known ΔP, H, R, D against the analytic solution, with the HPP response off; then with LFSM / FSM on.
-- Measured frequencies (POC for the HPPC, busbar for the plant controllers) come from the network through measurement PLLs (stage 7); until then from the grid machine.
-
-### 14.4 Stage 7: PLLs
-
-- One SRF-PLL per asset (error from the angle of the terminal voltage, PI, θ and f) with tunable bandwidth and damping; the asset injects its current along the PLL angle. Measurement PLLs (or filters with a window) for the plant controllers and the HPPC.
-- RMS tier: PLL dynamics on the phasor angle (≈ valid for slow PLLs); dq tier: the main tier for PLL studies.
-- Studies: PLL bandwidth against SCR (stability map), RoCoF and phase jumps, FFR and synthetic inertia (P ∝ df/dt) with measured frequency.
-
-### 14.5 Stage 8: dq network
-
-- Network in the ω0 frame: inductors L di/dt = v − R·i − jω0·L·i, capacitors C dv/dt = i − jω0·C·v; the whole network as dx/dt = A·x + B·u, inputs the asset currents / voltages, outputs the bus voltages. Built from the same network data as the nodal solver (`networkParameters`).
-- With the frame fixed at ω0, A and B are constant: discretize once (trapezoidal / Tustin) in `deriveParameters`, x[k+1] = Ad·x[k] + Bd·u[k], as tunable constants like today's Z. One matrix–vector product per step; works in Rapid Accelerator.
-- Option: frame rotating with the system frequency ω(t) (constant steady-state values in long deviations): the cross terms jω(t)L, jω(t)C make it nonlinear; kept cheap by treating the small deviation as an input, x[k+1] = Ad·x[k] + Bd·u[k] + Bd′·(Δω·A1·x[k]), with Ad at ω0. Both frames give the same physics; comparing them is a check.
-- Converters: averaged models with an inner dq current loop and filter at the small step; the asset controllers' outer loops and the plant / HPP controllers keep their rates (multirate).
-- Positive sequence only; a negative-sequence network for unbalanced faults is a later option.
-
-### 14.6 Stage 9: GFM
-
-- A GFL / GFM choice per asset type (Variant Subsystem, first for the BESS): droop or VSM angle control, virtual impedance, current limiting (with fallback), in the dq tier; a simplified RMS version for sweeps.
-- Studies: GFM against GFL for inertia and nadir, weak-grid stability, interaction with the plant and HPP controllers, central against decentral.
-
-### 14.7 EMT tier
-
-- Simscape Electrical in time mode, or PSCAD with the controllers as DLLs (the original plan). Converters as averaged voltage sources with the same inner loops as in the dq tier; the RMS asset models (IEC, WECC) are not valid in EMT.
-- Simscape parameters do not change in Rapid Accelerator (section 13), so Simscape EMT runs in normal mode; used for a few cases.
-
-### 14.8 Decided (2026-11-19)
-
-| Topic | Decision |
-|---|---|
-| System frequency model | **Nordic-like**, scaled so the plant's effect is visible: Nordic per-unit values (inertia H about 3–5 s on the system rating, governor droop and FCR-like time constants, small load damping) on a much smaller system rating Ssys (start about 2 GW, swept), and a disturbance of the same relative size as the Nordic dimensioning incident (about 1.4 GW of about 40 GW, so about 3.5 % of Ssys). Exact values in `p.grid.sys`, to be set in stage 6. |
-| Grid structure | The machine sits **directly behind today's grid impedance** (SCR, X/R as now). One area. |
-| Imposed frequency profiles | **Energinet test profiles** (from Energinet's test and verification documents for LFSM / FSM / FFR; to be taken from the current documents). Steps and the swing-equation grid remain. |
-| PLL | SRF-PLL **with a prefilter** on the measured voltage (for example a second-order generalised integrator (SOGI) or a moving-average filter over one cycle), tunable bandwidth. |
-| Frequency measurement for the controllers | Proposed (to be confirmed): the same prefiltered PLL, its frequency averaged over one cycle (20 ms) for control, and RoCoF over a sliding window (ENTSO-E uses 500 ms for RoCoF withstand). One measurement block, used by the HPPC and the plant controllers. |
-| Converter (dq tier) | Averaged model with an **LCL filter**, a **simple DC link** (capacitor with a DC voltage controller and a power source / storage behind it) and **angle-preserving current limiting** (the current reference is scaled down in magnitude, keeping its angle). |
-| Step size (dq tier) | Not fixed; **100 µs** to start, chosen after measuring speed and accuracy. |
-| GFM | **Virtual synchronous machine (VSM) in swing-equation form** (virtual inertia and damping on the converter's internal angle), **BESS only** first; wind and PV later. |
-| EMT tier | **In Simulink** (Simscape Electrical, time mode) for now; PSCAD later with the DLLs. |
-| Unbalanced faults | **Positive sequence only** in the dq tier first, to measure the run time; a negative-sequence network later. |
-
-Order of work: stage 6 (swing equation, Energinet profiles, frequency measurement) and stage 7 (PLLs) in the RMS tier first, then the dq network (stage 8) with the LCL / DC link converter for the BESS, then the BESS VSM (stage 9), then the EMT tier for validation.
