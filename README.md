@@ -69,9 +69,10 @@ Communication delays (`p.comm`, typical 20–200 ms) are discrete delays of whol
 |---|---|
 | `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, network, communication, plant controllers, HPPC) and then `deriveParameters` (controller parameters, per-instance asset arguments, network Z matrix). |
 | `models/` | `HPP.slx`, plus `ctrl/` (7 controllers) and `assets/` (3 asset models). |
-| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `checkModelBuild`, `networkCode`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`. Results: `plotResults`, `plotAllResults`, `summarizeResults`, `loadResults`, `caseLabels`, `dtuColors`. |
+| `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `checkModelBuild`, `networkCode`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`; compiled runs and checks: `rapidTarget`, `checkModels`, `delayMode`, `delaySignature`. Results: `plotResults`, `plotAllResults`, `summarizeResults`, `loadResults`, `caseLabels`, `dtuColors`. |
 | `scripts/+caseSets/` | Which variations to run: one file per case set. |
-| `utilities/` | `projectStartup.m` (runs when the project opens) and `buildHPP.m` (builds the models). |
+| `utilities/` | `projectStartup.m` (runs when the project opens), `buildHPP.m` (builds the models) and `modelInterfaces.m` (expected ports and arguments of the controller and asset models). |
+| `buildfile.m` | Build tasks for Run Build / `buildtool`: check, model, rapid, sweeps, figures (see Running). |
 | `docs/` | `design.md`: architecture and plan. |
 | `hpc/` | LSF job array: `submit.sh` and `job.lsf`. |
 | `experiments/` | Standalone test models, e.g. `simscapeGrid/ftGridTest.m` (Simscape frequency-and-time tests). Not used by the main model. |
@@ -151,6 +152,18 @@ In `handpicked`, adding a case is adding one line; the other cases never need ed
 | All cases of a set, serial | `runSweep("oat_Pref")` |
 | All cases with a local pool | `runSweep("oat_Pref", UseParallel=true)`, then `delete(gcp('nocreate'))` |
 | Debug a case in the Simulink editor | `c = defineCases("handpicked"); p = applyCase(HPP_parameters(), c("noBess", :));` then open `HPP.slx` and press Run |
+
+**Run Build** (the MATLAB project's toolstrip button, or `buildtool` in the Command Window) runs the tasks in `buildfile.m`, each after the one before; the chain stops at the first failure. `buildtool -tasks` lists them.
+
+| Task | Does | Command |
+|---|---|---|
+| `check` | `checkModels(Strict=true)`: controller and asset models | `buildtool check` |
+| `model` | `buildHPP()`: regenerates `models/HPP.slx`; skipped when `params/*.m`, `buildHPP.m`, `modelInterfaces.m` and the controller / asset models have not changed | `buildtool model` |
+| `rapid` (default) | `rapidTarget(HPP_parameters())`: compiles the Rapid Accelerator program; errors with the reason if not possible | `buildtool` |
+| `sweeps` | `runSweep(..., Mode="rapid")` for the sets of the report figures: nominal, freq_step, hppc_p, hppc_qv, wt_frt, bess_soc | `buildtool sweeps` |
+| `figures` | `plotAllResults(Purpose="report")` | `buildtool figures` |
+
+`buildtool figures` therefore checks, builds, runs and plots everything that is out of date. First run (check, model, rapid): 341 s, of which the Rapid build 142 s; a second run with nothing changed: 61 s. The build tool cache `.buildtool/` is not version-controlled.
 
 `runCase` saves `results/<set>/case_NNN.mat` with `out`, `p` and `caseInfo`. `runSweep` saves `results/<set>/sweep.mat` with `out`, `cases` and `setName`. A rerun overwrites the file, so copy results you want to keep.
 
