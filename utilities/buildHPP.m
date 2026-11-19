@@ -254,6 +254,7 @@ function buildTop(p, folder)
     end
     buildNetworkVariants(m + "/Network", p);       % nodal and Simscape, chosen per run
     buildGridFrequency(m + "/Grid frequency");     % imposed or swing equation
+    buildFreqMeas(m + "/Frequency measurement");   % PLLs on the POC and busbar voltages
     buildLogging(m + "/Logging");
 
     % ---- fixed top-level layout (left to right), before drawing lines ----
@@ -275,6 +276,7 @@ function buildTop(p, folder)
     setPos(m + "/TSO", [20, yT - 35, 120, yT + 35]);
     yN = get_param(m + "/Network", "Position");
     setPos(m + "/Grid frequency", [990, yN(4) + 120, 1190, yN(4) + 200]);
+    setPos(m + "/Frequency measurement", [990, yN(4) + 260, 1190, yN(4) + 360]);
     setPos(m + "/Logging", [1510 60 1630 60 + numel(logSignalNames())*36]);
 
     % block colours by role: controllers blue, plants green, network grey
@@ -298,9 +300,17 @@ function buildTop(p, folder)
     gotoFrom(m, "PV plant/1", ["HPP controller/4", "Logging/7"], "meas_spp", orange, "meas spp");
     gotoFrom(m, "TSO/1", "Logging/5", "tso", grey, "TSO");
     gotoFrom(m, "BESS plant/1", ["HPP controller/5", "Logging/4"], "meas_bess", orange, "meas bess");
-    gotoFrom(m, "Network/1", ["Wind plant/2", "PV plant/2", "BESS plant/2", "Logging/1"], "network", green, "network");
-    gotoFrom(m, "Network/2", ["HPP controller/2", "Logging/2", "Grid frequency/1"], "POC_meas", green, "POC meas");
-    gotoFrom(m, "Grid frequency/1", ["TSO/1", "Network/4"], "f_grid", green, "f");
+    gotoFrom(m, "Network/1", ["Wind plant/2", "PV plant/2", "BESS plant/2", "Logging/1", "Frequency measurement/1"], ...
+        "network", green, "network");
+    gotoFrom(m, "Network/2", ["HPP controller/2", "Logging/2", "Grid frequency/1", "Frequency measurement/2"], ...
+        "POC_meas", green, "POC meas");
+    % frequencies the controllers use are measured (stage 7): POC for the
+    % HPPC (via the TSO bus, f_meas), busbar for the plant controllers (via
+    % the network bus, f); the system frequency goes to the measurement only
+    gotoFrom(m, "Grid frequency/1", "Frequency measurement/3", "f_grid", green, "f");
+    gotoFrom(m, "Frequency measurement/1", "TSO/1", "f_poc", green, "f POC");
+    gotoFrom(m, "Frequency measurement/2", "Network/4", "f_bus", green, "f bus");
+    gotoFrom(m, "Frequency measurement/3", "Logging/8", "freq", grey, "freq");
     gotoFrom(m, "Grid frequency/2", "Network/5", "theta_grid", green, "theta");
     % BESS set-point for logging: short branch off the set-point bus to a
     % Goto just above the line (below it is the plant's network From)
@@ -382,7 +392,8 @@ function buildNetwork(sys)
     newSubsystem(sys);
     cm.ref  = ["I_re_wpp", "I_im_wpp", "I_re_spp", "I_im_spp", "I_re_bess", "I_im_bess", "I_re", "I_im", "E"];
     cm.meas = ["V_re", "V_im", "V_re_prev", "V_im_prev", "V_bus", "V_poc", "P_plant", "Q_plant", ...
-               "P_poc", "Q_poc", "P_plant_pu", "Q_plant_pu", "P_poc_pu", "Q_poc_pu"];
+               "P_poc", "Q_poc", "P_plant_pu", "Q_plant_pu", "P_poc_pu", "Q_poc_pu", ...
+               "V_bus_re", "V_bus_im", "V_poc_re", "V_poc_im"];
 
     % ---- current injections (system pu) and grid source voltage ----
     tags = ["wpp", "spp", "bess"];
@@ -416,7 +427,8 @@ function buildNetwork(sys)
     [~, hIn, rIn] = ctrlSection(sys, "Current injections and grid source (dip)", rows, 40, 20, cm, areaColor("interface"));
 
     % ---- network solution ----
-    outs = ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "P_poc", "Q_poc", "V_poc"];
+    outs = ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "P_poc", "Q_poc", "V_poc", ...
+            "V_bus_re", "V_bus_im", "V_poc_re", "V_poc_im"];
     body = [
         "% numeric network data come in as (tunable) inputs; net holds the structure"
         "Z  = complex(Zre, Zim);"
@@ -443,7 +455,10 @@ function buildNetwork(sys)
         "V_bus = abs(Vb);"
         "Vp = V(net.poc);"
         "Spoc = Vp * conj((Vp - Ec) / Zg);         % power into the grid"
-        "P_poc = real(Spoc);  Q_poc = imag(Spoc);  V_poc = abs(Vp);"];
+        "P_poc = real(Spoc);  Q_poc = imag(Spoc);  V_poc = abs(Vp);"
+        "% busbar and POC voltage phasors for the frequency measurement (PLLs)"
+        "V_bus_re = real(Vb);  V_bus_im = imag(Vb);"
+        "V_poc_re = real(Vp);  V_poc_im = imag(Vp);"];
     ins = ["I_re", "I_im", "E", "Zre", "Zim", "Zg_ri", "brZre", "brZim", "brB", "theta"];
     add_block("simulink/Sources/In1", sys + "/theta", "Port", "5", "Position", [0 0 30 14]);
     addMatlabFunction(sys + "/solve", "solve", ins, outs, body, "net", [0 0 160 360]);
@@ -456,8 +471,9 @@ function buildNetwork(sys)
     for j = 1:6
         kc(sys, ins(3 + j), vals(j));
     end
-    outTags = ["V_re", "V_im", "P_plant_pu", "Q_plant_pu", "V_bus", "P_poc_pu", "Q_poc_pu", "V_poc"];
-    outsS = [num2cell((2:8)'), num2cell(outTags(2:8)')];
+    outTags = ["V_re", "V_im", "P_plant_pu", "Q_plant_pu", "V_bus", "P_poc_pu", "Q_poc_pu", "V_poc", ...
+               "V_bus_re", "V_bus_im", "V_poc_re", "V_poc_im"];
+    outsS = [num2cell((2:12)'), num2cell(outTags(2:12)')];
     sidesS = [{2, "@I_im"; 3, "@E"}; num2cell((4:9)'), num2cell(ins(4:9)'); {10, "theta"}];
     rowsS = {[stg("@I_re", 0), stg("solve", 1, sidesS, outsS), stg(">" + outTags(1))]};
     [~, hS, rS] = ctrlSection(sys, "Network solution, V = Z (I_inj + I_grid)", rowsS, rIn + 90, 20, cm, areaColor("asset"));
@@ -470,8 +486,8 @@ function buildNetwork(sys)
         nb(sys, "gain", s + " to SI", "Gain", "net.Sb");
     end
     add_block("simulink/Sources/In1", sys + "/f grid", "Port", "4", "Position", [0 0 30 14]);
-    add_block("simulink/Signal Routing/Bus Creator", sys + "/network bus", "Inputs", "6", "Position", [0 0 6 300]);
-    add_block("simulink/Signal Routing/Bus Creator", sys + "/POC bus", "Inputs", "3", "Position", [0 0 6 150]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/network bus", "Inputs", "8", "Position", [0 0 6 400]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/POC bus", "Inputs", "5", "Position", [0 0 6 250]);
     add_block("simulink/Sinks/Out1", sys + "/network", "Port", "1", "Position", [0 0 30 14]);
     add_block("simulink/Sinks/Out1", sys + "/POC meas", "Port", "2", "Position", [0 0 30 14]);
     rowsO = {
@@ -479,14 +495,14 @@ function buildNetwork(sys)
         [stg("@P_plant_pu", 0), stg("P_plant to SI"), stg(">P_plant")]
         [stg("@Q_plant_pu", 0), stg("Q_plant to SI"), stg(">Q_plant")]
         [stg("@V_re", 0), stg("V_re prev"), stg("network bus", 1, {2, "@V_im_prev"; 3, "@P_plant"; 4, "@Q_plant"; ...
-         5, "@V_bus"; 6, "f grid"}), stg("network")]
+         5, "@V_bus"; 6, "f grid"; 7, "@V_bus_re"; 8, "@V_bus_im"}), stg("network")]
         [stg("@P_poc_pu", 0), stg("P_poc to SI"), stg(">P_poc")]
         [stg("@Q_poc_pu", 0), stg("Q_poc to SI"), stg(">Q_poc")]
-        [stg("@P_poc", 0), stg("POC bus", 1, {2, "@Q_poc"; 3, "@V_poc"}), stg("POC meas")]};
+        [stg("@P_poc", 0), stg("POC bus", 1, {2, "@Q_poc"; 3, "@V_poc"; 4, "@V_poc_re"; 5, "@V_poc_im"}), stg("POC meas")]};
     [~, hO] = ctrlSection(sys, "Output buses (V one step old, powers in W and var)", rowsO, rS + 90, 20, cm, areaColor("interface"));
     % bus element names come from the names of the lines into the creators
-    nameInputs(sys + "/network bus", ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "f"]);
-    nameInputs(sys + "/POC bus", ["P_poc", "Q_poc", "V_poc"]);
+    nameInputs(sys + "/network bus", ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "f", "V_bus_re", "V_bus_im"]);
+    nameInputs(sys + "/POC bus", ["P_poc", "Q_poc", "V_poc", "V_poc_re", "V_poc_im"]);
     alignColumns(hIn, hS, hO);
 
     mk = Simulink.Mask.create(sys);
@@ -564,7 +580,8 @@ function buildLogging(sys)
     % TSO references and grid frequency; available power of wind and PV
     groups = {"TSO", 5, ["P_ref", "Q_ref", "f_meas"], ["P_ref", "Q_ref", "f"]; ...
               "meas wpp", 6, "P_avail", "P_avail_wpp"; ...
-              "meas spp", 7, "P_avail", "P_avail_spp"};
+              "meas spp", 7, "P_avail", "P_avail_spp"; ...
+              "freq", 8, ["f_sys", "f_bus", "RoCoF"], ["f_sys", "f_bus", "RoCoF"]};
     for g = 1:size(groups, 1)
         [gname, gport, elems, logn] = groups{g, :};
         inport(sys, gname, gport);
@@ -581,7 +598,7 @@ function buildLogging(sys)
     end
     % ports were created in row order; set the final numbers explicitly
     renumberPorts(sys, order);
-    renumberPorts(sys, ["network", "POC meas", "set-points bess", "meas bess", "TSO", "meas wpp", "meas spp"]);
+    renumberPorts(sys, ["network", "POC meas", "set-points bess", "meas bess", "TSO", "meas wpp", "meas spp", "freq"]);
     set_param(sys, "Description", "Selects the logged signals (W, var, pu) for the top-level outports.");
     hideStructuralNames(sys);
 end
@@ -589,7 +606,7 @@ end
 function names = logSignalNames()
     % logged signals in outport order (out.yout); plotAll reads them by name
     names = ["P_poc","SOC","P_bess_set","Q_poc","P_wpp","P_spp","P_bess","Q_wpp","Q_spp","Q_bess", ...
-             "V_poc","V_bus","P_ref","Q_ref","f","P_avail_wpp","P_avail_spp"];
+             "V_poc","V_bus","P_ref","Q_ref","f","P_avail_wpp","P_avail_spp","f_sys","f_bus","RoCoF"];
 end
 
 %% ===================================================================
@@ -766,7 +783,7 @@ function buildAsset(type, folder)
     set_param(mdl, "SolverType", "Fixed-step", "Solver", "ode4", "FixedStep", "Tsim", "StopTime", "inf", ...
         "Description", type + " asset: " + ctrl + " (asset controller) + generator / converter model " + ...
                        "(WT: IEC 61400-27-1 Type 4 generator system; PV, BESS: WECC REGC_A) feeding a " + ...
-                       "current source aligned with the terminal voltage. Per unit on the asset rating " + ...
+                       "current source along the angle of its PLL. Per unit on the asset rating " + ...
                        "(voltage on the nominal voltage). Argument ap = p." + t + ".ap(k).");
     ws = get_param(mdl, "ModelWorkspace");
     ws.DataSource = "MATLAB Code";
@@ -786,7 +803,7 @@ function buildAsset(type, folder)
     end
     cm.ref  = ["P_set", "Q_set", "ip_cmd", "iq_cmd", "ip", "iq"];
     cm.meas = ["V_re", "V_im", "V_term", "P_meas", "Q_meas", "P", "Q", "SOC", "P_avail", ...
-               "P_wind_avail", "P_pv_avail", "I_re", "I_im"];
+               "P_wind_avail", "P_pv_avail", "I_re", "I_im", "pll_c", "pll_s"];
     ins = ["P_set", "Q_set", "V_re", "V_im"];
     if src ~= "", ins(end+1) = src; end
     [hIn, x] = ctrlInputs(mdl, ins, repmat("1", 1, numel(ins)), cm, "-1");
@@ -795,11 +812,15 @@ function buildAsset(type, folder)
     addMatlabFunction(mdl + "/terminal", "terminal", ["V_re", "V_im"], "V_term", ...
         "V_term = sqrt(V_re^2 + V_im^2);", "", [0 0 90 60]);
     nb(mdl, "mem", "P meas");  nb(mdl, "mem", "Q meas");
+    % PLL of the converter (stage 7): angle of the current injection
+    addMatlabFunction(mdl + "/PLL", "pll", ["V_re", "V_im"], ["c", "s"], pllBody("asset"), "ap", [0 0 110 70]);
+    setChartTs(mdl + "/PLL", "Tsim");     % discrete: it has states (persistent), the model is continuous
     rowsM = {
         [stg("@V_re", 0), stg("terminal", 1, {2, "@V_im"}), stg(">V_term")]
+        [stg("@V_re", 0), stg("PLL", 1, {2, "@V_im"}, {2, "pll_s"}), stg(">pll_c")]
         [stg("@P", 0), stg("P meas"), stg(">P_meas")]
         [stg("@Q", 0), stg("Q meas"), stg(">Q_meas")]};
-    [y, h1, r1] = ctrlSection(mdl, "Terminal measurements", rowsM, x, 20, cm, areaColor("interface"));
+    [y, h1, r1] = ctrlSection(mdl, "Terminal measurements and PLL", rowsM, x, 20, cm, areaColor("interface"));
 
     % asset controller (future DLL), ports 1 P_set 2 Q_set 3 V_term 4 P_meas 5 Q_meas 6 source
     cb = mdl + "/ctrl";
@@ -812,19 +833,18 @@ function buildAsset(type, folder)
               {2, "iq_cmd"; 3, "P_avail"}), stg(">ip_cmd")]};
     [y, h2, r2] = ctrlSection(mdl, "Asset controller (" + ctrl + ")", rowsC, x, y, cm, areaColor("controller"));
 
-    % generator / converter: current dynamics, then a current source
-    % aligned with the terminal voltage, I = (ip - j*iq) * V/|V|,
-    % P = |V|*ip, Q = |V|*iq (+ = export / capacitive)
+    % generator / converter: current dynamics, then a current source along
+    % the PLL angle th (c = cos th, s = sin th): I = (ip - j*iq) * e^(j th).
+    % P + jQ = V * conj(I) (+ = export / capacitive); with an ideal PLL
+    % (th = angle of V) this is P = |V|*ip, Q = |V|*iq
     gen = [
-        "v  = max(sqrt(V_re^2 + V_im^2), 1e-3);"
-        "cr = V_re / v;  ci = V_im / v;"
-        "I_re = ip*cr + iq*ci;"
-        "I_im = ip*ci - iq*cr;"
-        "P = v * ip;"
-        "Q = v * iq;"];
-    addMatlabFunction(mdl + "/generator", "generator", ["ip", "iq", "V_re", "V_im"], ...
-        ["P", "Q", "I_re", "I_im"], gen, "", [0 0 120 150]);
-    rowGen = [stg("@ip", 0), stg("generator", 1, {2, "@iq"; 3, "@V_re"; 4, "@V_im"}, ...
+        "I_re = ip*c + iq*s;"
+        "I_im = ip*s - iq*c;"
+        "P = V_re*I_re + V_im*I_im;"
+        "Q = V_im*I_re - V_re*I_im;"];
+    addMatlabFunction(mdl + "/generator", "generator", ["ip", "iq", "V_re", "V_im", "c", "s"], ...
+        ["P", "Q", "I_re", "I_im"], gen, "", [0 0 120 180]);
+    rowGen = [stg("@ip", 0), stg("generator", 1, {2, "@iq"; 3, "@V_re"; 4, "@V_im"; 5, "@pll_c"; 6, "@pll_s"}, ...
               {2, "Q"; 3, "I_re"; 4, "I_im"}), stg(">P")];
     if type == "WT"
         % IEC 61400-27-1 Type 4 generator system: current rate limits, then
@@ -2443,6 +2463,136 @@ function buildNetworkVariants(sys, p)
         "(HPP_network = 2, Simscape Electrical in frequency-and-time mode). See runCase, option Network.");
 end
 
+% ---------------------------------------------------------------------
+function body = pllBody(kind)
+    % SRF-PLL on a voltage phasor in the common frame (pllParameters), as
+    % MATLAB Function code. kind "asset": parameter ap (q = ap.pll), in
+    % V_re, V_im, out c, s (cos / sin of the PLL angle; ideal with on = 0:
+    % the angle of V). kind "meas": parameter m (q = m), in V_re, V_im,
+    % f_sys, out f [pu] (PLL frequency averaged over Navg; with on = 0 the
+    % system frequency) and RoCoF [Hz/s] over Nroc steps.
+    % Prefilter: moving average of the voltage in the PLL frame (d, q) over
+    % Npre steps (1 = off), i.e. a moving-average-filter PLL: the filter's
+    % delay (Npre/2 steps) is inside the loop and limits the bandwidth.
+    % The PLL is held when |V| < 0.05 pu (no angle information in a deep
+    % dip) and its frequency is limited to +-5 Hz. Buffers have fixed sizes
+    % (50, RoCoF 1000 steps, checked in deriveParameters).
+    if kind == "asset", q = "q = ap.pll;"; else, q = "q = m;"; end
+    body = [
+        q
+        "persistent th xi bufV sumV kV"
+        "vin = complex(V_re, V_im);"
+        "if isempty(th)"
+        "    th = angle(vin);  xi = 0;"
+        "    v0 = complex(abs(vin), 0);"
+        "    bufV = repmat(v0, 50, 1);  sumV = v0 * q.Npre;  kV = 1;"
+        "end"
+        "% voltage in the PLL frame (d, q), then the prefilter: moving average"
+        "% over the last Npre steps in that frame (MAF-PLL), so its delay is"
+        "% inside the loop as in a real moving-average-filter PLL"
+        "vdq = vin * complex(cos(th), -sin(th));"
+        "kV = mod(kV, 50) + 1;"
+        "old = bufV(mod(kV - 1 - q.Npre, 50) + 1);"
+        "bufV(kV) = vdq;"
+        "sumV = sumV + vdq - old;"
+        "v = sumV / q.Npre;"
+        "% SRF-PLL: e = v_q / |v| = sin(angle error), PI -> frequency deviation dw [rad/s]"
+        "mv = abs(v);"
+        "e = 0;"
+        "if mv > 0.05"
+        "    e = imag(v) / mv;"
+        "end"
+        "wlim = 2 * pi * 5;"
+        "xi = min(max(xi + q.ki * q.Ts * e, -wlim), wlim);"
+        "dw = min(max(q.kp * e + xi, -wlim), wlim);"
+        "th = mod(th + q.Ts * dw + pi, 2 * pi) - pi;"
+        "fp = 1 + dw / (2 * pi * q.f0);"];
+    if kind == "asset"
+        body = [body
+            "if q.on > 0.5"
+            "    c = cos(th);  s = sin(th);"
+            "else   % ideal: aligned with the terminal voltage"
+            "    vm = max(abs(vin), 1e-3);"
+            "    c = V_re / vm;  s = V_im / vm;"
+            "end"];
+    else
+        body = [body
+            "persistent bufF sumF kF bufR kR"
+            "if isempty(bufF)"
+            "    bufF = repmat(fp, 50, 1);  sumF = fp * q.Navg;  kF = 1;"
+            "    bufR = repmat(f_sys, 1000, 1);  kR = 1;"
+            "end"
+            "% frequency for control: PLL frequency averaged over Navg steps"
+            "kF = mod(kF, 50) + 1;"
+            "oldF = bufF(mod(kF - 1 - q.Navg, 50) + 1);"
+            "bufF(kF) = fp;"
+            "sumF = sumF + fp - oldF;"
+            "if q.on > 0.5"
+            "    f = sumF / q.Navg;"
+            "else   % system frequency, as before stage 7"
+            "    f = f_sys;"
+            "end"
+            "% RoCoF over the window Nroc steps [Hz/s]"
+            "kR = mod(kR, 1000) + 1;"
+            "oldR = bufR(mod(kR - 1 - q.Nroc, 1000) + 1);"
+            "bufR(kR) = f;"
+            "RoCoF = (f - oldR) * q.f0 / (q.Nroc * q.Ts);"];
+    end
+end
+
+function setChartTs(blk, ts)
+    % explicit discrete sample time of a MATLAB Function block (needed for
+    % persistent states where the block would otherwise inherit a
+    % continuous rate)
+    ch = sfroot().find("-isa", "Stateflow.EMChart", "Path", char(blk));
+    ch.ChartUpdate = "DISCRETE";          % SampleTime only applies to discrete update
+    ch.SampleTime = char(ts);
+end
+
+function buildFreqMeas(sys)
+    % Frequency measurement of the controllers (stage 7): SRF-PLLs on the
+    % POC voltage (HPPC) and on the 33 kV busbar voltage (plant
+    % controllers), frequency averaged over one cycle, RoCoF over 500 ms
+    % (pllParameters, p.pll.meas; masked, parameter m, tunable).
+    % In: 1 network bus (V_bus_re, V_bus_im), 2 POC bus (V_poc_re,
+    % V_poc_im), 3 system frequency f [pu] (Grid frequency).
+    % Out: 1 f at the POC [pu], 2 f at the busbar [pu], 3 bus for logging
+    % (f_sys, f_bus, RoCoF at the POC).
+    newSubsystem(sys);
+    add_block("simulink/Sources/In1", sys + "/network", "Port", "1", "Position", [20 40 50 54]);
+    add_block("simulink/Sources/In1", sys + "/POC meas", "Port", "2", "Position", [20 160 50 174]);
+    add_block("simulink/Sources/In1", sys + "/f sys", "Port", "3", "Position", [20 280 50 294]);
+    add_block("simulink/Signal Routing/Bus Selector", sys + "/bus sel", "Position", [100 30 105 70]);
+    set_param(sys + "/bus sel", "OutputSignals", "V_bus_re,V_bus_im");
+    add_block("simulink/Signal Routing/Bus Selector", sys + "/POC sel", "Position", [100 150 105 190]);
+    set_param(sys + "/POC sel", "OutputSignals", "V_poc_re,V_poc_im");
+    addMatlabFunction(sys + "/PLL bus", "pll_meas", ["V_re", "V_im", "f_sys"], ["f", "RoCoF"], pllBody("meas"), "m", [200 30 320 100]);
+    addMatlabFunction(sys + "/PLL POC", "pll_meas", ["V_re", "V_im", "f_sys"], ["f", "RoCoF"], pllBody("meas"), "m", [200 150 320 220]);
+    setChartTs(sys + "/PLL bus", "p.sim.Ts");  setChartTs(sys + "/PLL POC", "p.sim.Ts");
+    add_block("simulink/Sinks/Terminator", sys + "/RoCoF bus", "Position", [360 75 380 95]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/freq bus", "Inputs", "3", "Position", [420 240 425 320]);
+    add_block("simulink/Sinks/Out1", sys + "/f POC", "Port", "1", "Position", [480 160 510 174]);
+    add_block("simulink/Sinks/Out1", sys + "/f bus", "Port", "2", "Position", [480 40 510 54]);
+    add_block("simulink/Sinks/Out1", sys + "/freq", "Port", "3", "Position", [480 275 510 289]);
+    ln(sys, "network/1", "bus sel/1", "");  ln(sys, "POC meas/1", "POC sel/1", "");
+    ln(sys, "bus sel/1", "PLL bus/1", "V_bus_re");  ln(sys, "bus sel/2", "PLL bus/2", "V_bus_im");
+    ln(sys, "POC sel/1", "PLL POC/1", "V_poc_re");  ln(sys, "POC sel/2", "PLL POC/2", "V_poc_im");
+    ln(sys, "f sys/1", "PLL bus/3", "f_sys");  ln(sys, "f sys/1", "PLL POC/3", "");
+    ln(sys, "PLL bus/1", "f bus/1", "f_bus");  ln(sys, "PLL bus/2", "RoCoF bus/1", "");
+    ln(sys, "PLL POC/1", "f POC/1", "f_poc");
+    ln(sys, "f sys/1", "freq bus/1", "");  ln(sys, "PLL bus/1", "freq bus/2", "");  ln(sys, "PLL POC/2", "freq bus/3", "");
+    ln(sys, "freq bus/1", "freq/1", "");
+    nameInputs(sys + "/freq bus", ["f_sys", "f_bus", "RoCoF"]);
+    mk = Simulink.Mask.create(sys);
+    mk.addParameter("Name", "m", "Prompt", "Measurement PLL data", "Value", "p.pll.meas", "Evaluate", "on", "Tunable", "on");
+    mk.Description = "Frequency measurement of the controllers: SRF-PLL with prefilter on the POC voltage " + ...
+        "(HPPC) and the busbar voltage (plant controllers), averaged over one cycle; RoCoF. " + ...
+        "p.pll.meas.on = 0: the system frequency. See params/pllParameters.m.";
+    mk.Display = "disp('frequency measurement')";
+    set_param(sys, "BackgroundColor", areaColor("interface"));
+end
+
+% ---------------------------------------------------------------------
 function buildGridFrequency(sys)
     % Grid frequency f [pu] and grid source angle theta [rad] (stage 6):
     % imposed (p.grid.fev step + p.grid.fprof profile) or a swing equation
@@ -2480,7 +2630,8 @@ function buildGridFrequency(sys)
         "end"
         "th = th + 2 * pi * g.f0 * (f - 1) * Ts;"
         "th = mod(th + pi, 2 * pi) - pi;"
-        "theta = th;"];
+        "% phase jump of the grid source (p.grid.pjump), e.g. a line trip"
+        "theta = mod(th + g.pjump.dphi * (t >= g.pjump.t0) + pi, 2 * pi) - pi;"];
     addMatlabFunction(sys + "/frequency", "grid_frequency", ["P_poc", "t", "Ts"], ["f", "theta"], body, "g", [240 40 400 190]);
     add_block("simulink/Sinks/Out1", sys + "/f", "Port", "1", "Position", [470 60 500 74]);
     add_block("simulink/Sinks/Out1", sys + "/theta", "Port", "2", "Position", [470 150 500 164]);
@@ -2512,7 +2663,8 @@ function buildNetworkSimscape(sys, p)
     f0 = "p.grid.f0";
     cm.ref  = ["Ire_" + (1:nA), "Iim_" + (1:nA), "Ire_" + tags, "Iim_" + tags, "t", "E_mag", "E_ph"];
     cm.meas = ["Vre_" + (1:nA), "Vim_" + (1:nA), "V_re_prev", "V_im_prev", "P_" + tags, "Q_" + tags, ...
-               "P_plant", "Q_plant", "V_bus", "P_poc", "Q_poc", "V_poc"];
+               "P_plant", "Q_plant", "V_bus", "P_poc", "Q_poc", "V_poc", ...
+               "V_bus_re", "V_bus_im", "V_poc_re", "V_poc_im"];
     hMid = [];
 
     % ================= inputs: current injections and time =================
@@ -2704,6 +2856,14 @@ function buildNetworkSimscape(sys, p)
         set_param(sys + "/" + g, "Position", [xH + 290, yo - 11, xH + 290 + gp(3) - gp(1), yo + 11]);
         add_line(sys, vn(j) + "/1", g + "/1");
         blks = [blks, vn(j), g]; %#ok<AGROW>
+        for r = 2:3                                   % phasor (re, im) for the frequency measurement
+            sfx = ["", "_re", "_im"];
+            gr = addGoto(sys, vt(j) + sfx(r), tagColor(cm, vt(j) + sfx(r)));
+            yr = portY(sys + "/" + vn(j), "out", r);
+            set_param(sys + "/" + gr, "Position", [xH + 290, yr - 11, xH + 290 + gp(3) - gp(1), yr + 11]);
+            add_line(sys, vn(j) + "/" + r, gr + "/1");
+            blks = [blks, gr]; %#ok<AGROW>
+        end
     end
     add_block("nesl_utility/Solver Configuration", sys + "/solver", "EquationFormulation", "NE_FREQUENCY_TIME_EF", ...
         "UseLocalSolver", "on", "LocalSolverChoice", "NE_BACKWARD_EULER_ADVANCER", "LocalSolverSampleTime", "p.sim.Ts", ...
@@ -2721,8 +2881,8 @@ function buildNetworkSimscape(sys, p)
     add_block("simulink/Signal Routing/Mux", sys + "/P_plant all", "Inputs", "3", "Position", [0 0 6 90]);
     add_block("simulink/Signal Routing/Mux", sys + "/Q_plant all", "Inputs", "3", "Position", [0 0 6 90]);
     add_block("simulink/Sources/In1", sys + "/f grid", "Port", "4", "Position", [0 0 30 14]);
-    add_block("simulink/Signal Routing/Bus Creator", sys + "/network bus", "Inputs", "6", "Position", [0 0 6 300]);
-    add_block("simulink/Signal Routing/Bus Creator", sys + "/POC bus", "Inputs", "3", "Position", [0 0 6 150]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/network bus", "Inputs", "8", "Position", [0 0 6 400]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/POC bus", "Inputs", "5", "Position", [0 0 6 250]);
     add_block("simulink/Sinks/Out1", sys + "/network", "Port", "1", "Position", [0 0 30 14]);
     add_block("simulink/Sinks/Out1", sys + "/POC meas", "Port", "2", "Position", [0 0 30 14]);
     sre = [num2cell((2:nA)'), num2cell("@Vre_" + (2:nA)')];
@@ -2732,11 +2892,11 @@ function buildNetworkSimscape(sys, p)
         [stg("@Vim_1", 0), stg("V_im all", 1, sim_), stg("V_im prev"), stg(">V_im_prev")]
         [stg("@P_wpp", 0), stg("P_plant all", 1, {2, "@P_spp"; 3, "@P_bess"}), stg(">P_plant")]
         [stg("@Q_wpp", 0), stg("Q_plant all", 1, {2, "@Q_spp"; 3, "@Q_bess"}), stg(">Q_plant")]
-        [stg("@V_re_prev", 0), stg("network bus", 1, {2, "@V_im_prev"; 3, "@P_plant"; 4, "@Q_plant"; 5, "@V_bus"; 6, "f grid"}), stg("network")]
-        [stg("@P_poc", 0), stg("POC bus", 1, {2, "@Q_poc"; 3, "@V_poc"}), stg("POC meas")]};
+        [stg("@V_re_prev", 0), stg("network bus", 1, {2, "@V_im_prev"; 3, "@P_plant"; 4, "@Q_plant"; 5, "@V_bus"; 6, "f grid"; 7, "@V_bus_re"; 8, "@V_bus_im"}), stg("network")]
+        [stg("@P_poc", 0), stg("POC bus", 1, {2, "@Q_poc"; 3, "@V_poc"; 4, "@V_poc_re"; 5, "@V_poc_im"}), stg("POC meas")]};
     [~, hOut] = ctrlSection(sys, "Output buses (V one step old, powers in W and var)", rows, xo, 20, cm, areaColor("interface"));
-    nameInputs(sys + "/network bus", ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "f"]);
-    nameInputs(sys + "/POC bus", ["P_poc", "Q_poc", "V_poc"]);
+    nameInputs(sys + "/network bus", ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "f", "V_bus_re", "V_bus_im"]);
+    nameInputs(sys + "/POC bus", ["P_poc", "Q_poc", "V_poc", "V_poc_re", "V_poc_im"]);
     alignColumns(hIn, {hMid, [hDip, hGrid, hV]}, hOut);
     set_param(sys, "Description", "Network as a Simscape Electrical model in frequency-and-time mode " + ...
         "(buildNetworkSimscape). Same ports as the nodal network. Electrical nodes are joined by " + ...
@@ -2874,6 +3034,10 @@ function vMeterBlock(sys, name, Vn, pos, lib)
     add_line(b, h("Vs").RConn(1), h("v").LConn(1));
     add_line(b, "v/1", "phasor/1");  add_line(b, "clock/1", "phasor/2");
     add_line(b, "phasor/1", "abs/1");  add_line(b, "phasor/2", "abs/2");  add_line(b, "abs/1", "V/1");
+    % the phasor itself (pu, common frame) for the frequency measurement
+    add_block("simulink/Sinks/Out1", b + "/V_re", "Port", "2", "Position", [460 115 490 129]);
+    add_block("simulink/Sinks/Out1", b + "/V_im", "Port", "3", "Position", [460 145 490 159]);
+    add_line(b, "phasor/1", "V_re/1");  add_line(b, "phasor/2", "V_im/1");
     set_param(b, "BackgroundColor", "[0.95 0.95 0.95]");
 end
 

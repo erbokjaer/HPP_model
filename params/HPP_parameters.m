@@ -24,6 +24,7 @@ function p = HPP_parameters(variant)
     p.comm = commParameters();
     p.pc   = plantControlParameters();
     p.hppc = hppcParameters();
+    p.pll  = pllParameters();
 
     switch variant
         case "default"

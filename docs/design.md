@@ -392,6 +392,20 @@ Checks (default layout, Rapid Accelerator, 16 s for the 6 cases of 90 s):
 - RMS tier: PLL dynamics on the phasor angle (≈ valid for slow PLLs); dq tier: the main tier for PLL studies.
 - Studies: PLL bandwidth against SCR (stability map), RoCoF and phase jumps, FFR and synthetic inertia (P ∝ df/dt) with measured frequency.
 
+**Status (2026-11-19): built in the RMS tier.** Parameters `p.pll` (`params/pllParameters.m`; gains and window lengths derived in `deriveParameters`).
+- **Asset PLL** (block `PLL` in every asset model, code `pllBody` in `buildHPP.m`): SRF-PLL on the terminal voltage phasor, $e = v_q/|v|$ in the PLL frame, PI with $k_p = 2\zeta\omega_n$, $k_i = \omega_n^2$, $\omega_n = 2\pi f_{BW}$; frequency limited to ±5 Hz, held below 0.05 pu. The converter injects $I = (i_p - j i_q)e^{j\theta}$ along the PLL angle and $P + jQ = V I^*$. Default `fBW` 5 Hz, ζ 0.707, prefilter `Tpre` 20 ms.
+- **Prefilter** = moving average over one cycle of the voltage **in the PLL frame** (MAF-PLL), so its 10 ms delay is inside the loop. A first version averaged the phasor in the fixed frame, before the angle comparison: the delay was then outside the loop and every bandwidth up to 40 Hz looked stable. In the RMS tier there are no harmonics to filter, so the MAF only contributes its delay; that delay is what limits a real MAF-PLL.
+- **Frequency measurement** (top-level block `Frequency measurement`, `buildFreqMeas`): the same PLL on the POC voltage phasor (HPPC `f_meas`, via the TSO bus) and on the 33 kV busbar phasor (plant controllers, via the network bus `f`), frequency averaged over 20 ms, RoCoF over 500 ms. Both network models now output the busbar and POC phasors (`V_bus_re/im`, `V_poc_re/im`). New logged signals `f_sys` (system), `f_bus`, `RoCoF` (POC); `f` is now the measured POC frequency.
+- **Phase jump** of the grid source `p.grid.pjump` (t0, dphi) to excite the PLLs; case set `pll_scr`.
+- `p.pll.asset.on = 0` / `p.pll.meas.on = 0` give the behaviour before stage 7 exactly (ideal angle, system frequency).
+
+Checks (Rapid Accelerator):
+- PLLs off: nominal, `wt_frt`, `hppc_qv`, `sys_freq` identical to the saved results (≤ 2e-12 MW); `freq_step` within 0.5 MW (its saved results predate stage 6).
+- Default PLLs (5 Hz, MAF): steady-state cases within 0.7–0.9 MW of the ideal PLL (start-up and the wind step); final values equal. LFSM-O +0.5 Hz: same final P (−21.6 MW), 90 % after 0.33 s instead of 0.29 s; measured and system frequency agree to 2e-9 pu. Voltage dip 0.5: P back within 2 % 0.06 s after clearing (0.13 s with the ideal PLL).
+- **Bandwidth against SCR, 2° phase jump (small signal), MAF on:** 5 Hz well damped (ratio of successive peaks 0.2–0.3); 10 Hz poorly damped (0.45 at SCR 10, 0.75 at SCR 1.5); 20 and 40 Hz unstable (growing / sustained oscillation) at every SCR. Without the MAF (30 Hz) stable. This agrees with the loop: crossover near $2\omega_n$, phase margin of the PI about 65°, minus the MAF delay $\omega \cdot 10$ ms (≈ 30° at 5 Hz, ≈ 60° at 10 Hz).
+- `pll_scr` (20° jump): 20 Hz oscillates without decaying (74 MW at SCR 1.5); 2–10 Hz settle in 0.5–2 s, slowest at SCR 1.5.
+- The RMS tier has no network electromagnetic dynamics, so these limits are optimistic for weak grids; the dq tier (stage 8) repeats the map.
+
 ### 14.5 Stage 8: dq network
 
 - Network in the ω0 frame: inductors L di/dt = v − R·i − jω0·L·i, capacitors C dv/dt = i − jω0·C·v; the whole network as dx/dt = A·x + B·u, inputs the asset currents / voltages, outputs the bus voltages. Built from the same network data as the nodal solver (`networkParameters`).

@@ -9,6 +9,7 @@ function p = deriveParameters(p)
 %     p.wt.ap, p.pv.ap, p.bess.ap   per-instance arguments of the asset
 %                          models (N-by-1 struct arrays); HPP.slx passes
 %                          p.<type>.ap(k) to asset instance k
+%     p.pll.asset, .meas   PLL gains kp, ki and window lengths in steps
 
     for t = ["wt", "pv", "bess"]
         p.(t).N      = p.(t).nFeeders * p.(t).nPerFeeder;
@@ -27,14 +28,37 @@ function p = deriveParameters(p)
 
     p.ctrl = controllerParameters(p);
 
+    % PLL gains and window lengths in steps (pllParameters): kp = 2 zeta wn,
+    % ki = wn^2; windows as whole steps, within the fixed buffer sizes of
+    % the PLL code (pllBody in buildHPP: 50 steps, RoCoF 1000 steps)
+    for g = ["asset", "meas"]
+        q = p.pll.(g);
+        wn = 2 * pi * q.fBW;
+        q.kp = 2 * q.zeta * wn;
+        q.ki = wn^2;
+        q.Npre = max(1, round(q.Tpre / p.sim.Ts));
+        if g == "meas"
+            q.Navg = max(1, round(q.Tavg / p.sim.Ts));
+            q.Nroc = max(1, round(q.Trocof / p.sim.Ts));
+        else
+            q.Navg = 1;  q.Nroc = 1;
+        end
+        q.f0 = p.grid.f0;
+        q.Ts = p.sim.Ts;
+        assert(q.Npre <= 50 && q.Navg <= 50 && q.Nroc <= 1000, ...
+            "pll.%s: Tpre and Tavg must be at most 50 steps, Trocof at most 1000 steps", g);
+        p.pll.(g) = q;
+    end
+
     % Asset model arguments, one per instance (identical for now)
-    p.wt.ap = repmat(struct("ctrl", p.ctrl.wt.par, "gen", p.wt.iec.gen), p.wt.N, 1);
-    p.pv.ap = repmat(struct("ctrl", p.ctrl.pv.par, "gen", p.pv.wecc.gen), p.pv.N, 1);
+    p.wt.ap = repmat(struct("ctrl", p.ctrl.wt.par, "gen", p.wt.iec.gen, "pll", p.pll.asset), p.wt.N, 1);
+    p.pv.ap = repmat(struct("ctrl", p.ctrl.pv.par, "gen", p.pv.wecc.gen, "pll", p.pll.asset), p.pv.N, 1);
 
     Eunit = p.bess.E / p.bess.N;                       % [J] per instance
     p.bess.ap = repmat(struct( ...
         "ctrl", p.ctrl.bess.par, ...
         "gen", p.bess.wecc.gen, ...
+        "pll", p.pll.asset, ...
         "SOC0", p.bess.SOC0, ...
         "kSOC", p.ctrl.bess.Pbase / Eunit), ...        % [1/s] dSOC/dt per pu power
         p.bess.N, 1);

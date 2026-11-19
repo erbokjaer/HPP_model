@@ -67,7 +67,7 @@ Communication delays (`p.comm`, typical 20–200 ms) are discrete delays of whol
 
 | Folder | Contents |
 |---|---|
-| `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, network, communication, plant controllers, HPPC) and then `deriveParameters` (controller parameters, per-instance asset arguments, network Z matrix). |
+| `params/` | What the plant is. `HPP_parameters.m` builds one struct `p` from one function per component (simulation, wind, PV, battery, grid, network, communication, plant controllers, HPPC, PLLs) and then `deriveParameters` (controller parameters, per-instance asset arguments, network Z matrix). |
 | `models/` | `HPP.slx`, plus `ctrl/` (7 controllers) and `assets/` (3 asset models). |
 | `scripts/` | How to run: `runCase`, `runSweep`, `defineCases`, `applyCase`, `checkModelBuild`, `networkCode`, `caseList`, `caseGrid`, `caseOAT`, `listCaseSets`; compiled runs and checks: `rapidTarget`, `checkModels`, `delayMode`, `delaySignature`. Results: `plotResults`, `plotAllResults`, `summarizeResults`, `loadResults`, `caseLabels`, `dtuColors`. |
 | `scripts/+caseSets/` | Which variations to run: one file per case set. |
@@ -120,6 +120,7 @@ A case set is a function in `scripts/+caseSets/` that returns a table. Each colu
 | `hppc_p` | `Pref 150 MW`, `step -30 MW`, `step +20 MW`, `step +40 MW (limit)`, `step -30 MW, 10 %/min`, `step -30 MW, no ramp` (P_ref step at 40 s, 120 s runs) | `caseList` |
 | `bess_soc` | `SOC0 0.5`, `SOC0 0.15`, `at SOCmin`, `SOC0 0.85`, `at SOCmax`, `SOC0 0.5, +20 MW`, `SOC0 0.15, +20 MW` | `caseList` |
 | `sys_freq` | swing-equation grid (`p.grid.sys.swing = 1`, 2 GW Nordic-like): `swing, no event`, loss of 3.5 % with the HPP response off / LFSM / FSM / FSM at H 2 s, `load drop 3.5 %, LFSM` (event at 40 s, 90 s runs) | `caseList` |
+| `pll_scr` | PLL bandwidth (2, 5, 10, 20 Hz) × SCR (10, 3, 1.5), 20° phase jump of the grid source at 40 s (`p.grid.pjump`), 60 s runs; 20 Hz with the one-cycle prefilter is unstable | `caseGrid` |
 
 To add a set, copy one of these files, rename it and edit it. Nothing else needs to change. Three helpers build the table:
 
