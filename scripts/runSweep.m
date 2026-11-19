@@ -13,10 +13,12 @@ function out = runSweep(setName, opts)
 %                                                 into a program (rapidTarget)
 %                                                 and every case runs it with
 %                                                 its own p, about 1.5 s per
-%                                                 60 s case. Rebuilt only when
-%                                                 the layout, time step, delays,
-%                                                 network model or a model file
-%                                                 change. Falls back to normal
+%                                                 60 s case (2.2 s with
+%                                                 variable delays). Rebuilt
+%                                                 only when the layout, time
+%                                                 step, delay mode (with fixed
+%                                                 delays: the delays), network
+%                                                 model or a model file change. Falls back to normal
 %                                                 mode (warning with the reason,
 %                                                 see rapidTarget) when there is
 %                                                 no C compiler, with the
@@ -28,9 +30,18 @@ function out = runSweep(setName, opts)
 %                                                 8-10 s per case). Every
 %                                                 parameter is tunable except
 %                                                 the layout (units per plant),
-%                                                 the time step, the
-%                                                 communication delays and the
-%                                                 network model.
+%                                                 the time step, the network
+%                                                 model and, with fixed delays,
+%                                                 the delays.
+%   out = runSweep(..., Delays="fixed")           how the communication delays
+%                                                 are compiled: "fixed"
+%                                                 (fastest), "variable"
+%                                                 (tunable, for delay sweeps)
+%                                                 or "auto": variable if the
+%                                                 case set changes a delay
+%                                                 (comm.* column), otherwise
+%                                                 fixed. Default p.comm.delays
+%                                                 ("auto"), see commParameters.
 %
 %   out(k) is the output of case k. Results go to results/<setName>/sweep.mat
 %   with out, cases and setName. listCaseSets() shows the available sets.
@@ -51,6 +62,7 @@ function out = runSweep(setName, opts)
         opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape"])} = ""
         opts.FastRestart (1,1) logical = false
         opts.Mode (1,1) string {mustBeMember(opts.Mode, ["normal", "rapid"])} = "normal"
+        opts.Delays (1,1) string {mustBeMember(opts.Delays, ["", "auto", "fixed", "variable"])} = ""
     end
     rapid = opts.Mode == "rapid";
     if rapid && opts.FastRestart
@@ -58,11 +70,14 @@ function out = runSweep(setName, opts)
     end
 
     cases = defineCases(setName);
-    if opts.FastRestart || (rapid && opts.UseParallel)
-        checkTunable(cases, setName);
-    end
     pBase = HPP_parameters();
     if opts.Network ~= "", pBase.net.solverType = opts.Network; end
+    [pBase, delayCode] = delayMode(pBase, cases, opts.Delays);    % one mode for the whole set
+    fixedDelays = pBase.comm.delays == "fixed";
+    fprintf("[%s] %d case(s), %s delays\n", setName, height(cases), pBase.comm.delays);
+    if opts.FastRestart || (rapid && opts.UseParallel)
+        checkTunable(cases, setName, fixedDelays);
+    end
     checkModelBuild(pBase);
 
     in(height(cases)) = Simulink.SimulationInput("HPP");      % normal mode
@@ -70,6 +85,7 @@ function out = runSweep(setName, opts)
     ps = cell(height(cases), 1);
     for k = 1:height(cases)
         p = applyCase(pBase, cases(k, :));
+        p.comm.delays = pBase.comm.delays;                     % one delay mode for the set
         ps{k} = p;
         in(k) = Simulink.SimulationInput("HPP");
         in(k) = in(k).setVariable("p", p);
@@ -78,6 +94,7 @@ function out = runSweep(setName, opts)
         inR(k) = in(k).setModelParameter("SimulationMode", "rapid-accelerator", ...
             "RapidAcceleratorUpToDateCheck", "off");
         in(k) = in(k).setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
+        in(k) = in(k).setVariable("HPP_delays", delayCode, "Workspace", "HPP");
     end
 
     if rapid
@@ -106,7 +123,7 @@ function out = runSweep(setName, opts)
         end
         if k0 <= numel(in)
             rest = k0:numel(in);
-            fr = fastRestartPossible(cases(rest, :));
+            fr = fastRestartPossible(cases(rest, :), fixedDelays);
             how = "";  if fr, how = " with Fast Restart"; end
             fprintf("[%s] cases %d-%d in normal mode%s instead of Rapid Accelerator.\n", setName, k0, numel(in), how);
             if fr
@@ -122,9 +139,9 @@ function out = runSweep(setName, opts)
     end
 
     if opts.FastRestart
-        % the communication delays (whole steps) are fixed when the model is
-        % compiled; they are equal in all cases (checkTunable), so the
-        % warnings that p changed in non-tunable parameters are expected
+        % the compile-time values in p (layout, time step, maxDelay) are
+        % equal in all cases (checkTunable), so the warnings that p changed
+        % in non-tunable parameters are expected
         ids = ["Simulink:Engine:NonTunableVarChangedInFastRestart", ...
                "Simulink:Engine:NonTunableVarChangedMaxWarnings"];
         old = arrayfun(@(i) warning("off", i), ids);
@@ -156,28 +173,29 @@ function s = onOff(b)
     if b, s = "on"; else, s = "off"; end
 end
 
-function ok = fastRestartPossible(cases)
+function ok = fastRestartPossible(cases, fixedDelays)
     % Fast Restart keeps one compiled model: only if no case changes a
     % compile-time value (see checkTunable)
     try
-        checkTunable(cases, "");
+        checkTunable(cases, "", fixedDelays);
         ok = true;
     catch
         ok = false;
     end
 end
 
-function checkTunable(cases, setName)
+function checkTunable(cases, setName, fixedDelays)
     % Fast Restart keeps the compiled model: values that are fixed at
-    % compile time (layout, time step, communication delays, network model)
-    % would silently keep their first value. Refuse case sets that change them.
-    exact  = ["net.solverType", "sim.Ts"];
-    prefix = "comm.";
+    % compile time (layout, time step, size of the delay buffers, delay
+    % mode, network model; with fixed delays also the delays) would
+    % silently keep their first value. Refuse case sets that change them.
+    exact  = ["net.solverType", "sim.Ts", "comm.maxDelay", "comm.delays"];
     suffix = [".nFeeders", ".nPerFeeder", ".N"];
     cols = string(cases.Properties.VariableNames);
-    bad = cols(arrayfun(@(c) any(c == exact) || startsWith(c, prefix) || any(endsWith(c, suffix)), cols));
+    bad = cols(arrayfun(@(c) any(c == exact) || any(endsWith(c, suffix)) || ...
+        (fixedDelays && startsWith(c, "comm.")), cols));
     if ~isempty(bad)
         error("runSweep:notTunable", "Case set ""%s"" changes %s, which is fixed when the model is " + ...
-            "compiled. Run it without FastRestart.", setName, strjoin(bad, ", "));
+            "compiled. Run it without FastRestart (or, for delays, with Delays=""variable"").", setName, strjoin(bad, ", "));
     end
 end

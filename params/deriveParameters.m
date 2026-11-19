@@ -15,6 +15,16 @@ function p = deriveParameters(p)
         p.(t).Prated = p.(t).N * p.(t).nAgg * p.(t).Pn;
     end
 
+    % communication delays in whole simulation steps (delay lengths of the
+    % link blocks; with comm.delays = "variable" the buffers hold up to maxDelay)
+    nMax = round(p.comm.maxDelay / p.sim.Ts);
+    p.comm.steps = struct();
+    for f = setdiff(string(fieldnames(p.comm))', ["maxDelay", "steps", "delays"])
+        n = round(p.comm.(f) / p.sim.Ts);
+        assert(n >= 0 && n <= nMax, "comm.%s = %g s is outside 0 ... comm.maxDelay = %g s", f, p.comm.(f), p.comm.maxDelay);
+        p.comm.steps.(f) = n;
+    end
+
     p.ctrl = controllerParameters(p);
 
     % Asset model arguments, one per instance (identical for now)

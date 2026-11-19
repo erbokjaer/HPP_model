@@ -11,6 +11,8 @@ mode     = "rapid";                   % "rapid": compiled once, ~1.5-2 s per 60 
                                       % "normal": for debugging with scopes inside the models
 fastRestart = true;                   % normal mode only: keep the model compiled between runs
 network  = "nodal";                   % "nodal" (fast) or "simscape" (Simscape Electrical, ~5x slower)
+delays   = "auto";                    % "fixed" (fastest), "variable" (delay sweeps without rebuilding)
+                                      % or "auto" (variable if the case set changes a delay)
 signals  = ["P_poc", "Q_poc", "V_poc", "P_wpp", "P_spp", "P_bess", "SOC"];
 theme    = "auto";                    % "auto" (MATLAB theme), "light" or "dark"
 exportTo = "";                        % e.g. "figures/handpicked.png"; "" = no export
@@ -35,7 +37,7 @@ for k = 1:height(cases)
             % no saved result for this case: run it below
         end 
     end
-    out(k) = runCase(setName, id, Network=network, Mode=mode, FastRestart=fastRestart);
+    out(k) = runCase(setName, id, Network=network, Mode=mode, FastRestart=fastRestart, Delays=delays);
 end
 
 % Summary

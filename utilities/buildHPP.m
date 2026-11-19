@@ -325,6 +325,8 @@ function buildTop(p, folder)
         "built", string(datetime("now"))));
     % active network variant for runs started from the editor (runCase sets it per run)
     assignin(ws, "HPP_network", networkCode(p.net.solverType));
+    [~, dc] = delayMode(p, table());
+    assignin(ws, "HPP_delays", dc);
     save_system(m, fullfile(folder, "HPP.slx"));
     fprintf("Built HPP.slx with N = %d wind, %d PV, %d BESS asset instances.\n", p.wt.N, p.pv.N, p.bess.N);
 end
@@ -1311,8 +1313,9 @@ end
 function name = makeLink(sys, label, steps)
     % Compact "link" block: masked subsystem with the steps in series.
     % steps: "gain:<expr>" (unit / per-unit conversion), "memory" (one-step
-    % measurement memory), "delay:<time>[@<initial output>]" (communication
-    % delay). Returns the block name "<label> link" (not yet connected).
+    % measurement memory), "delay:p.comm.<name>[@<initial output>]"
+    % (communication delay, variable length p.comm.steps.<name>). Returns the
+    % block name "<label> link" (not yet connected).
     name = label + " link";
     blk = sys + "/" + name;
     add_block("simulink/Ports & Subsystems/Subsystem", blk);
@@ -1339,12 +1342,10 @@ function name = makeLink(sys, label, steps)
                 parts = split(arg, "@");
                 init = "0";
                 if numel(parts) > 1, init = parts(2); end
-                % discrete delay of whole simulation steps at p.sim.Ts. The
-                % length is fixed when the model is compiled (a variable-length
-                % delay made every run about 0.5 s per simulated second slower)
-                add_block("simulink/Discrete/Delay", blk + "/" + bn, ...
-                    "DelayLength", "round(" + parts(1) + "/p.sim.Ts)", "InitialCondition", init, ...
-                    "SampleTime", "p.sim.Ts");
+                % discrete delay of p.comm.steps.<name> whole simulation steps
+                % (deriveParameters), as a variant chosen per run (delayMode)
+                stepsField = "p.comm.steps." + extractAfter(parts(1), "p.comm.");
+                buildDelayVariant(blk + "/" + bn, stepsField, init);
                 lbl(end+1) = erase(parts(1), "p."); %#ok<AGROW>
                 desc(end+1) = "delay " + parts(1) + " in whole steps (initial output " + init + ")"; %#ok<AGROW>
             case "memory"
@@ -1364,6 +1365,51 @@ function name = makeLink(sys, label, steps)
     % the icon says what the link does and the port it feeds says which
     % signal it carries, so the name is hidden (keeps rows compact)
     set_param(blk, "Position", [0 0 30 + 7*strlength(strjoin(lbl, " | ")) 26], "ShowName", "off");
+end
+
+function buildDelayVariant(vs, stepsField, init)
+    % Variant Subsystem with the two delay implementations as choices:
+    %   Fixed    (HPP_delays == 1): delay length fixed at compile time, fastest
+    %   Variable (HPP_delays == 2): length as a tunable input, up to
+    %                               p.comm.maxDelay (buffer size), for sweeps
+    % The variant control variable HPP_delays is set per run (delayMode via
+    % runCase / runSweep / rapidTarget). Activation at update diagram: only
+    % the active choice is compiled, so the fixed choice costs nothing extra.
+    add_block("simulink/Ports & Subsystems/Variant Subsystem", vs);
+    for b = string(find_system(vs, "SearchDepth", 1, "MatchFilter", @Simulink.match.allVariants, "Type", "Block"))'
+        if b ~= vs, delete_block(b); end
+    end
+    L = find_system(vs, "SearchDepth", 1, "FindAll", "on", "Type", "line");
+    if ~isempty(L), delete_line(L); end
+    add_block("simulink/Sources/In1", vs + "/u", "Position", [40 50 70 64]);
+    add_block("simulink/Sinks/Out1", vs + "/y", "Position", [420 50 450 64]);
+    for c = ["Fixed", "Variable"]
+        sub = vs + "/" + c;
+        add_block("simulink/Ports & Subsystems/Subsystem", sub);
+        delete_line(sub, "In1/1", "Out1/1");
+        if c == "Fixed"
+            add_block("simulink/Discrete/Delay", sub + "/Delay", "DelayLength", stepsField, ...
+                "InitialCondition", init, "SampleTime", "p.sim.Ts");
+        else
+            add_block("simulink/Discrete/Delay", sub + "/Delay", "DelayLengthSource", "Input port", ...
+                "DelayLengthUpperLimit", "round(p.comm.maxDelay/p.sim.Ts)", ...
+                "InitialCondition", init, "SampleTime", "p.sim.Ts");
+            add_block("simulink/Sources/Constant", sub + "/steps", "Value", stepsField, ...
+                "SampleTime", "p.sim.Ts", "OutDataTypeStr", "double");
+            add_line(sub, "steps/1", "Delay/2", "autorouting", "smart");
+        end
+        set_param(sub + "/In1", "Name", "u");          % choice ports match the container's by name
+        set_param(sub + "/Out1", "Name", "y");
+        add_line(sub, "u/1", "Delay/1", "autorouting", "smart");
+        add_line(sub, "Delay/1", "y/1", "autorouting", "smart");
+        Simulink.BlockDiagram.arrangeSystem(sub);
+    end
+    set_param(vs + "/Fixed", "VariantControl", "HPP_delays == 1", "Position", [180 20 300 60]);
+    set_param(vs + "/Variable", "VariantControl", "HPP_delays == 2", "Position", [180 90 300 130]);
+    set_param(vs, "VariantActivationTime", "update diagram", "Description", ...
+        "Communication delay of " + stepsField + " steps, chosen per run: Fixed (HPP_delays = 1, " + ...
+        "length fixed at compile time, fastest) or Variable (HPP_delays = 2, tunable up to " + ...
+        "p.comm.maxDelay). See commParameters, comm.delays.");
 end
 
 function chain(sys, src, steps, dst, label, outName)

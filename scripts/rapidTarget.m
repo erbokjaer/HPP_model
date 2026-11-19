@@ -16,8 +16,14 @@ function st = rapidTarget(p, opts)
 %   then reused: every run passes its own p, and all parameter values are
 %   tunable (controllers, grid and network data, events, stop time). It is
 %   rebuilt only when something fixed at compile time changes: the layout
-%   (units per plant), the time step, the communication delays, the network
-%   model, or a model file in models/ (after buildHPP or an edit).
+%   (units per plant), the time step, the delay mode p.comm.delays (with
+%   "fixed" delays also the delays; with "variable" delays comm.maxDelay,
+%   the size of the delay buffers), the network model, or a model file in
+%   models/ (after buildHPP or an edit). p.comm.delays = "auto" counts as
+%   "fixed" here (runCase / runSweep resolve it per case set, delayMode). The
+%   fingerprint of these is saved next to the target
+%   (hpp_rapid_fingerprint.mat), so a new MATLAB session reuses an unchanged
+%   target without rebuilding.
 %
 %   Not possible (normal mode instead), with the reason in the warning:
 %   - no C compiler selected (mex -setup C);
@@ -39,10 +45,26 @@ function st = rapidTarget(p, opts)
         opts.Strict (1,1) logical = false
     end
     persistent lastKey lastStatus
+    if p.comm.delays == "auto"
+        p = delayMode(p, table());                        % single run: "auto" means fixed
+    end
+
+    % Rapid Accelerator cannot run while the model is in Fast Restart (e.g.
+    % after a normal-mode run with FastRestart=true): switch it off first
+    if bdIsLoaded("HPP") && strcmp(get_param("HPP", "FastRestart"), "on")
+        set_param("HPP", "FastRestart", "off");
+    end
 
     key = struct("sig", compileSignature(p), "models", modelStamp(), ...
         "noCompilerHook", getenv("HPP_TEST_NO_COMPILER"));
     folder = fullfile(Simulink.fileGenControl("get", "CacheFolder"), "slprj", "raccel", "HPP");
+    keyFile = fullfile(folder, "hpp_rapid_fingerprint.mat");
+    if isempty(lastKey) && isfile(keyFile)
+        % new MATLAB session: the fingerprint of the last successful build is
+        % saved next to the target, so an unchanged target is reused
+        S = load(keyFile, "key");
+        lastKey = S.key;  lastStatus = struct("ok", true, "reason", "", "built", false);
+    end
     if ~opts.Force && isequal(key, lastKey) && ~isempty(lastStatus) && (~lastStatus.ok || isfolder(folder))
         st = lastStatus;  st.built = false;
         return
@@ -72,6 +94,7 @@ function st = rapidTarget(p, opts)
             try
                 buildTarget(p);
                 st.ok = true;  st.built = true;
+                save(keyFile, "key");                     % fingerprint for later sessions
             catch err
                 msg = strtrim(string(err.message));  msg = extractBefore(msg + newline, newline);
                 st.reason = "the build failed: " + msg;
@@ -100,6 +123,10 @@ function buildTarget(p)
     netOld = getVariable(ws, "HPP_network");
     assignin(ws, "HPP_network", networkCode(p.net.solverType));
     restoreNet = onCleanup(@() assignin(ws, "HPP_network", netOld)); %#ok<NASGU>
+    delOld = getVariable(ws, "HPP_delays");
+    [~, dc] = delayMode(p, table());
+    assignin(ws, "HPP_delays", dc);
+    restoreDel = onCleanup(@() assignin(ws, "HPP_delays", delOld)); %#ok<NASGU>
 
     fprintf("Building the Rapid Accelerator target of HPP (once per layout / model change) ...\n");
     t = tic;
@@ -125,5 +152,5 @@ end
 function sig = compileSignature(p)
     % same compile-time values as runCase's Fast Restart check
     sig = struct("N", [p.wt.N, p.pv.N, p.bess.N], "Ts", p.sim.Ts, ...
-        "comm", p.comm, "network", p.net.solverType);
+        "delays", delaySignature(p), "network", p.net.solverType);
 end

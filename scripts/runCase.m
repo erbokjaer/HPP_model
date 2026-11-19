@@ -9,11 +9,13 @@ function out = runCase(setName, caseId, opts)
 %                                             model is compiled once into a
 %                                             program (rapidTarget, ~25-50 s,
 %                                             MinGW) and each run takes ~1.5-2 s
-%                                             for 60 s. All parameters are
-%                                             tunable; it is rebuilt only when
-%                                             the layout, time step, delays,
-%                                             network model or a model file
-%                                             change. FastRestart does not apply.
+%                                             for 60 s. Parameters are tunable;
+%                                             it is rebuilt only when the
+%                                             layout, time step, delay mode
+%                                             (and with fixed delays the
+%                                             delays), network model or a model
+%                                             file change. FastRestart does not
+%                                             apply.
 %                                             Falls back to normal mode with Fast
 %                                             Restart (warning with the reason)
 %                                             when there is no C compiler, with
@@ -26,6 +28,13 @@ function out = runCase(setName, caseId, opts)
 %                                             "simscape" (Simscape Electrical,
 %                                             about 5 times slower); default
 %                                             p.net.solverType
+%   runCase(..., Delays="variable")           how the communication delays
+%                                             are compiled: "fixed" (fastest),
+%                                             "variable" (tunable, for delay
+%                                             sweeps) or "auto" (variable if
+%                                             the case set changes a delay);
+%                                             default p.comm.delays ("auto"),
+%                                             see commParameters
 %   runCase(..., FastRestart=true)            keep the model compiled between
 %                                             runs in this MATLAB session: a
 %                                             rerun skips the compile (about
@@ -33,9 +42,10 @@ function out = runCase(setName, caseId, opts)
 %                                             tunable (controllers, grid and
 %                                             network data, events); it
 %                                             recompiles by itself only when
-%                                             the layout, time step,
-%                                             communication delays or network
-%                                             model differ from the previous run.
+%                                             the layout, time step, delay
+%                                             mode (with fixed delays: the
+%                                             delays) or network model differ
+%                                             from the previous run.
 %
 %   Results go to results/<setName>/case_NNN.mat with out, p and caseInfo.
 %   listCaseSets() shows the available case sets.
@@ -50,6 +60,7 @@ function out = runCase(setName, caseId, opts)
         opts.Save (1,1) logical = true
         opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape"])} = ""
         opts.FastRestart (1,1) logical = false
+        opts.Delays (1,1) string {mustBeMember(opts.Delays, ["", "auto", "fixed", "variable"])} = ""
     end
     persistent lastSignature     % compile-time values of the model kept compiled
 
@@ -59,8 +70,10 @@ function out = runCase(setName, caseId, opts)
 
     p = applyCase(HPP_parameters(), cases(k, :));
     if opts.Network ~= "", p.net.solverType = opts.Network; end
+    [p, delayCode] = delayMode(p, cases, opts.Delays);
     checkModelBuild(p);
-    fprintf("Running %s, case %d%s, %s network\n", setName, k, nameSuffix(caseName), p.net.solverType);
+    fprintf("Running %s, case %d%s, %s network, %s delays\n", setName, k, nameSuffix(caseName), ...
+        p.net.solverType, p.comm.delays);
 
     % Rapid Accelerator if possible; otherwise (no compiler, Simscape network,
     % checkModels findings, failed build: rapidTarget warns why) normal mode
@@ -84,6 +97,7 @@ function out = runCase(setName, caseId, opts)
         in = in.setModelParameter("RapidAcceleratorUpToDateCheck", "off");
     else
         in = in.setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
+        in = in.setVariable("HPP_delays", delayCode, "Workspace", "HPP");
     end
 
     if useFR && mode == "normal"
@@ -173,8 +187,9 @@ end
 
 function sig = compileSignature(p)
     % what is fixed when HPP.slx is compiled: the layout (number of units),
-    % the time step, the communication delays and the network model. All
-    % other values are tunable (network data, controllers, grid events).
+    % the time step, the delay mode with the delays (fixed) or the size of
+    % the delay buffers (variable), and the network model. All other values
+    % are tunable (network data, controllers, grid events).
     sig = struct("N", [p.wt.N, p.pv.N, p.bess.N], "Ts", p.sim.Ts, ...
-        "comm", p.comm, "network", p.net.solverType);
+        "delays", delaySignature(p), "network", p.net.solverType);
 end
