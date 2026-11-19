@@ -797,9 +797,9 @@ function buildAsset(type, folder)
         % IEC 61400-27-1 Type 4 generator system: current rate limits, then
         % a first-order lag Tg (active current: only its rise is limited)
         nb(mdl, "rate", "dipmax", "RisingSlewLimit", "ap.gen.dipmax", "FallingSlewLimit", "-1e6");
-        nb(mdl, "tf", "Tg ip", "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
+        contLag(mdl, "Tg ip", "ap.gen.Tg");
         nb(mdl, "rate", "diqmax", "RisingSlewLimit", "ap.gen.diqmax", "FallingSlewLimit", "-ap.gen.diqmax");
-        nb(mdl, "tf", "Tg iq", "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
+        contLag(mdl, "Tg iq", "ap.gen.Tg");
         rowsG = {
             [stg("@ip_cmd", 0), stg("dipmax"), stg("Tg ip"), stg(">ip")]
             [stg("@iq_cmd", 0), stg("diqmax"), stg("Tg iq"), stg(">iq")]
@@ -810,9 +810,9 @@ function buildAsset(type, folder)
         % low voltage active current management (LVACM) and low voltage
         % power logic (LVPL, static, on the unfiltered voltage)
         nb(mdl, "rate", "Rrpwr", "RisingSlewLimit", "ap.gen.Rrpwr", "FallingSlewLimit", "-1e6");
-        nb(mdl, "tf", "Tg ip", "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
+        contLag(mdl, "Tg ip", "ap.gen.Tg");
         nb(mdl, "rate", "Iqrmax", "RisingSlewLimit", "ap.gen.Iqrmax", "FallingSlewLimit", "ap.gen.Iqrmin");
-        nb(mdl, "tf", "Tg iq", "Numerator", "1", "Denominator", "[ap.gen.Tg 1]");
+        contLag(mdl, "Tg iq", "ap.gen.Tg");
         lv = [
             "v = sqrt(V_re^2 + V_im^2);"
             "g = ap.gen;"
@@ -1590,6 +1590,25 @@ function lagBlk(sys, name, T, y0)
     nb(sys, "lag", name, "PoleZ", "1 - Ts/" + T, "ICPrevOutput", y0);
 end
 
+function contLag(sys, name, T)
+    % continuous first-order lag 1/(T s + 1), initial output 0, built as
+    % err -> gain 1/T -> integrator with feedback: the same as a Transfer Fcn
+    % block, but its parameter "1/(T)" stays tunable in generated code (a
+    % Transfer Fcn denominator "[T 1]" does not: vector concatenation)
+    blk = sys + "/" + name;
+    add_block("built-in/Subsystem", blk, "Position", [0 0 70 34]);
+    add_block("built-in/Inport", blk + "/u", "Position", [20 43 50 57]);
+    add_block("simulink/Math Operations/Sum", blk + "/err", "Inputs", "+-", "IconShape", "rectangular", ...
+        "Position", [90 35 115 65]);
+    add_block("simulink/Math Operations/Gain", blk + "/gain", "Gain", "1/(" + T + ")", "Position", [145 35 205 65]);
+    add_block("simulink/Continuous/Integrator", blk + "/state", "Position", [235 35 265 65]);
+    add_block("built-in/Outport", blk + "/y", "Position", [300 43 330 57]);
+    add_line(blk, "u/1", "err/1");  add_line(blk, "err/1", "gain/1");
+    add_line(blk, "gain/1", "state/1");  add_line(blk, "state/1", "y/1");
+    add_line(blk, "state/1", "err/2", "autorouting", "on");
+    set_param(blk, "Mask", "on", "MaskDisplay", "disp('1 / (Tg s + 1)')", "MaskIconOpaque", "off");
+end
+
 function piBlk(sys, name, Kp, Ki, lim)
     % discrete PI with clamping anti-windup; lim "" = external limits (up, lo ports)
     if lim == ""
@@ -1679,7 +1698,7 @@ function buildWTCtrlType4A(folder)
     nb(mdl, "div", "q_ref to iq");
     nb(mdl, "sum", "iq ff + PI", "Inputs", "++");
     nb(mdl, "sum", "q error", "Inputs", "+-");
-    kc(mdl, "MqG = 1", "double(par.MqG == 1)");  kc(mdl, "no q loop", "0");
+    kc(mdl, "MqG = 1", "par.MqG1");  kc(mdl, "no q loop", "0");   % MqG1 = (MqG == 1), from controllerParameters
     nb(mdl, "switch", "q loop on?", "Criteria", "u2 ~= 0");
     kc(mdl, "q frozen", "0");
     nb(mdl, "switch", "freeze in dip", "Criteria", "u2 ~= 0");
@@ -2012,10 +2031,13 @@ function buildHppcCtrl(folder)
         "k = par.Vslope / par.Qmax + par.dVdQ;"
         "V_errL = min(max(V_err, (par.Qmin - Q_filt) * k), (par.Qmax - Q_filt) * k);"];
     addMatlabFunction(mdl + "/POC Q limit", "poc_q_limit", ["V_err", "Q_filt"], "V_errL", body, "par", [0 0 110 60]);
-    nb(mdl, "gain", "tan phi", "Gain", "par.PFsign * sqrt(1 / par.PF^2 - 1)");
-    kc(mdl, "PF mode", "double(par.RefFlag == 2)");
+    % block parameters with model arguments must stay simple arithmetic (+ - * /)
+    % to be tunable in generated code (accelerator, DLL): derived values such as
+    % tan(phi) and the mode flags come from controllerParameters
+    nb(mdl, "gain", "tan phi", "Gain", "par.tanphi");
+    kc(mdl, "PF mode", "par.isPF");
     nb(mdl, "switch", "PF control?", "Criteria", "u2 ~= 0");
-    kc(mdl, "RefFlag ff", "double(par.RefFlag == 1)");  kc(mdl, "no Q ff", "0");
+    kc(mdl, "RefFlag ff", "par.isV");  kc(mdl, "no Q ff", "0");
     nb(mdl, "switch", "Q feed-forward", "Criteria", "u2 ~= 0");
     % order limits: Qmax / Qmin, or wider when the order is only the offset of
     % the plants' local V-Q droop lines (the plants limit their real Q)
@@ -2023,7 +2045,7 @@ function buildHppcCtrl(folder)
     kc(mdl, "Qmin", "par.QminOrd");  nb(mdl, "sum", "Qmin - ff", "Inputs", "+-");
     lagBlk(mdl, "TrefQ", "par.TrefQ", "0");
     nb(mdl, "sum", "Q error", "Inputs", "+-");
-    kc(mdl, "RefFlag", "double(par.RefFlag == 1)");
+    kc(mdl, "RefFlag", "par.isV");
     nb(mdl, "switch", "V control?", "Criteria", "u2 ~= 0");
     kc(mdl, "Qflag", "par.Qflag");  kc(mdl, "no Q loop", "0");
     nb(mdl, "switch", "Q loop on?", "Criteria", "u2 ~= 0");
@@ -2047,8 +2069,7 @@ function buildHppcCtrl(folder)
         "end"];
     addMatlabFunction(mdl + "/plant anti-windup", "plant_anti_windup", ["e", "Q_sat_wpp", "Q_sat_spp", "Q_sat_bess"], ...
         "e_aw", body, "par", [0 0 130 140]);
-    piBlk(mdl, "Q PI", "par.Kpq + (par.RefFlag == 1)*(par.KpVn / par.LV - par.Kpq)", ...
-        "par.Kiq + (par.RefFlag == 1)*(par.KiVn / par.LV - par.Kiq)", "");
+    piBlk(mdl, "Q PI", "par.KpQ", "par.KiQ", "");   % Q / PF or (normalised) voltage gains, controllerParameters
     nb(mdl, "sum", "ff + Q PI", "Inputs", "++");
     nb(mdl, "sat", "Qmax Qmin", "UpperLimit", "par.QmaxOrd", "LowerLimit", "par.QminOrd");
     rowsQ = {

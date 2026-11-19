@@ -81,7 +81,9 @@ Asset counts and layout: each plant has `nFeeders` feeders with `nPerFeeder` uni
 
 Network model: the `Network` block holds two models with the same results (nominal P_poc within 1 kW, dip within 0.1 MW), chosen per run without rebuilding: `"nodal"` (nodal solver, fast) and `"simscape"` (Simscape Electrical blocks in frequency-and-time mode, component-wise, much slower: about 40 s of simulation per 60 s case). Choose it with the `network` setting in `main.m`, or `runCase(set, id, Network="nodal")`, `runSweep(set, Network="simscape")`; the default is `p.net.solverType`, set to `"nodal"`.
 
-Run time and Fast Restart (nominal 60 s case, nodal network, this laptop). Without Fast Restart every run compiles the model with its referenced controller and asset models, which is most of the time: about 50–100 s per run. With Fast Restart the model stays compiled and every further run only simulates: about 3–16 s per 60 s case with the nodal network (fewer units and more free memory are faster), about 40 s with the Simscape network. Use `runCase(..., FastRestart=true)` (the `fastRestart` setting in `main.m`, on by default) or `runSweep(set, FastRestart=true)` (grid_strength, 3 cases: 25 s in total with the 1 × 1 layout).
+Run time: **Rapid Accelerator** is the fastest and the default in `main.m` (`mode = "rapid"`; `runCase(..., Mode="rapid")`, `runSweep(set, Mode="rapid")`). The model with its controller and asset models is compiled once into a program with MinGW (`rapidTarget`, about 20–50 s), and every run reuses it with its own `p`: about 1.5–2 s per 60 s case, with results identical to normal mode (within 2e-12). All seven case sets (46 cases) run in 68 s, against about 15 minutes in normal mode with Fast Restart. The target is rebuilt by itself when the layout, time step, communication delays, network model or a model file change. Normal mode stays for debugging with scopes inside the models. A parallel pool does not help with Rapid Accelerator: each run is so short that parsim's overhead dominates (16 cases: 24 s serial, 101 s on 3 workers).
+
+Normal mode and Fast Restart (nominal 60 s case, nodal network). Without Fast Restart every run compiles the model with its referenced controller and asset models, which is most of the time: about 50–100 s per run. With Fast Restart the model stays compiled and every further run only simulates: about 3–16 s per 60 s case with the nodal network (fewer units and more free memory are faster), about 40 s with the Simscape network. Use `runCase(..., FastRestart=true)` (the `fastRestart` setting in `main.m`, on by default) or `runSweep(set, FastRestart=true)` (grid_strength, 3 cases: 25 s in total with the 1 × 1 layout).
 
 Almost all parameters can change between Fast Restart runs without recompiling: controller parameters, set-points, events (dips, frequency steps), grid strength (SCR, X/R, E), cable, transformer and unit data. The nodal network gets its numbers through tunable constants, the Simscape network uses run-time block parameters. Fixed at compile time are only the layout (units per plant), the time step, the communication delays (a variable-length delay would make every run slower) and the network model; `runCase` recompiles by itself when one of these changes, and `runSweep` with Fast Restart refuses case sets that change them. The top model uses a single-step solver (ode1, single-tasking) and logs every 10 ms (`p.sim.logDecimation`). Accelerator mode (needs a C compiler) would mainly shorten the first compile.
 
@@ -138,7 +140,8 @@ In `handpicked`, adding a case is adding one line; the other cases never need ed
 | Nominal case | `runCase()` |
 | One case by name or number | `runCase("handpicked", "noBess")`, `runCase("grid_Pref_Pbess", 4)` |
 | Quick check, no file written | `runCase("oat_Pref", 2, Save=false)` |
-| Rerun without compiling | `runCase(..., FastRestart=true)`, `runSweep(set, FastRestart=true)` |
+| Fastest: compiled once, ~1.5 s per case | `runCase(..., Mode="rapid")`, `runSweep(set, Mode="rapid")` |
+| Normal mode, rerun without compiling | `runCase(..., FastRestart=true)`, `runSweep(set, FastRestart=true)` |
 | Simscape network instead of nodal | `runCase(..., Network="simscape")`, `runSweep(set, Network="simscape")` |
 | All cases of a set, serial | `runSweep("oat_Pref")` |
 | All cases with a local pool | `runSweep("oat_Pref", UseParallel=true)`, then `delete(gcp('nocreate'))` |
@@ -156,7 +159,7 @@ Read signals with `out.yout.get("SOC").Values`. The logged signals:
 | `P_bess_set` | W | HPPC set-point to the BESS plant |
 | `SOC` | – | plant SOC (share-weighted mean of the assets) |
 
-Run time: see Parameters, "Run time and Fast Restart". Most of a run without Fast Restart is compiling the referenced models (measured: 49 of 56 s compile time); model reference accelerator mode would shorten that but needs the C compiler.
+Run time: see Parameters (Rapid Accelerator, Fast Restart). Needs the MinGW C compiler (installed); block parameters that use controller or asset parameters are kept to simple arithmetic (derived values such as tan(phi) and mode flags are computed in `controllerParameters`), so they stay tunable in compiled code.
 
 ## Looking at results
 
@@ -211,7 +214,7 @@ This submits one job per case, each running `runCase(set, i)`. The script counts
 - Start-up is not initialised in steady state yet: during the first fraction of a second the controllers see zero measurements and the network sees no injection.
 - The HPPC derates the BESS limits near SOCmin / SOCmax, but does not restore SOC towards a target yet.
 - The `"noBattery"` variant bug is fixed: derived parameters are now computed after the variant.
-- Later: code generation of every controller and IEEE/CIGRE DLLs for PSCAD. This needs Simulink Coder, Embedded Coder and a C compiler, which are not installed yet.
+- Later: code generation of every controller and IEEE/CIGRE DLLs for PSCAD. MATLAB Coder, Embedded Coder and MinGW are installed (2026-11-19); Simulink Coder is being added.
 
 ## Source control
 

@@ -5,7 +5,15 @@ function out = runCase(setName, caseId, opts)
 %   runCase("handpicked", "noBess")           case by row name
 %   runCase("grid_Pref_Pbess", 4)             case by row number
 %   runCase("oat_Pref", 2, Save=false)        don't write a results file
-%   runCase(..., Mode="rapid")                Rapid Accelerator (needs C compiler)
+%   runCase(..., Mode="rapid")                Rapid Accelerator, the fastest: the
+%                                             model is compiled once into a
+%                                             program (rapidTarget, ~25-50 s,
+%                                             MinGW) and each run takes ~1.5-2 s
+%                                             for 60 s. All parameters are
+%                                             tunable; it is rebuilt only when
+%                                             the layout, time step, delays,
+%                                             network model or a model file
+%                                             change. FastRestart does not apply.
 %   runCase(..., Network="nodal")             network model for this run:
 %                                             "nodal" (fast nodal solver) or
 %                                             "simscape" (Simscape Electrical,
@@ -49,11 +57,19 @@ function out = runCase(setName, caseId, opts)
 
     in = Simulink.SimulationInput("HPP");
     in = in.setVariable("p", p);
-    in = in.setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
     in = in.setModelParameter("SimulationMode", modeName(opts.Mode), ...
                               "StopTime", num2str(p.sim.Tstop));
 
-    if opts.FastRestart
+    if opts.Mode == "rapid"
+        % compiled program, built once per layout / model change (rapidTarget);
+        % the network model and other compile-time values are in the target
+        rapidTarget(p);
+        in = in.setModelParameter("RapidAcceleratorUpToDateCheck", "off");
+    else
+        in = in.setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
+    end
+
+    if opts.FastRestart && opts.Mode == "normal"
         load_system("HPP");
         sig = compileSignature(p);
         if ~isequal(sig, lastSignature) && strcmp(get_param("HPP", "FastRestart"), "on")
@@ -67,7 +83,7 @@ function out = runCase(setName, caseId, opts)
                "Simulink:Engine:NonTunableVarChangedMaxWarnings"];
         old = arrayfun(@(i) warning("off", i), ids);
         restore = onCleanup(@() warning(old));
-    elseif bdIsLoaded("HPP") && strcmp(get_param("HPP", "FastRestart"), "on")
+    elseif opts.Mode ~= "rapid" && bdIsLoaded("HPP") && strcmp(get_param("HPP", "FastRestart"), "on")
         set_param("HPP", "FastRestart", "off");
         lastSignature = [];
     end

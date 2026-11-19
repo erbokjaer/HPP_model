@@ -279,8 +279,8 @@ Afterwards: code generation of every controller (needs the Coder products and a 
 - **Spike at fault clearing:** the network with one-step-delayed current sources gives a single-step spike when a dip clears (Q_poc ≈ 125 Mvar for one step). A smaller step or a filter on the network voltage would remove it.
 - **Steady-state initialisation** at start-up (controllers currently start from zero measurements).
 - **Tap changer and reactive compensation** (STATCOM, shunt reactors): not modelled yet (section 5).
-- **Simulation speed:** largely solved with Fast Restart (section 11). Still open: the first compile per session (about 20–60 s) and the Simscape network's own simulation time; model reference accelerator mode (needs the C compiler) would help both.
-- **Code generation and PSCAD** (after stage 5): needs the Coder products and a C compiler, which are not installed yet.
+- **Simulation speed:** solved for the nodal network with Rapid Accelerator (section 13). Still open: the Simscape network in Rapid Accelerator (not tested), parallel model-reference builds to shorten the one-time accelerator build of the referenced models.
+- **Code generation and PSCAD** (after stage 5): MATLAB Coder, Embedded Coder and MinGW installed 2026-11-19; Simulink Coder (needed to generate code from Simulink models) is being added. The controller blocks already use only tunable block expressions (section 13).
 
 ## 11. Simulation and run time  (2026-11-17)
 
@@ -308,3 +308,20 @@ Measured: 1 × 1 layout per plant, nodal network: first run including compile ab
 - **report** (`results/figures/report/`): one small figure per point a case set makes, defined in `scripts/reportFigures.m` (cases, signals per axis, time window, a one-line statement of what it shows). 8.8 cm wide (one column), 8 pt Times, at most two or three axes, legend inside the top axis with headroom left for it, references dashed, fault cases zoomed on the fault; vector PDF for LaTeX plus a PNG preview. The statements are checked against the results when the cases are rerun.
 - **debug** (`results/figures/debug/`): every logged signal of every case of a set in one figure (P, Q, V, f, plant P with availability, BESS P with set-point, SOC, plant Q), full time plus a zoom on the event; PNG and `.fig`. Lines are thinned (minimum and maximum per bin, so peaks stay), since full-resolution figures of 16 cases ran MATLAB out of graphics memory.
 Logged signals: P, Q, V at the POC, V_bus, P_ref, Q_ref, f, P / Q per plant, P_bess_set, available wind and PV power, SOC. Case sets were trimmed for the figures: open-loop cases removed, frequency steps at 50 s and voltage dips at 45 s, after the plant has ramped up following the wind step at 20 s.
+
+## 13. Compiled simulation: Rapid Accelerator  (2026-11-19)
+
+With MinGW (and MATLAB / Embedded Coder) installed, the model can be compiled. Measured on the 32 GB laptop, nominal 60 s case, nodal network, results compared with normal mode:
+
+| Mode | One-time build | Each further run | Difference to normal mode |
+|---|---|---|---|
+| Normal, Fast Restart | 44–83 s first compile | 8–35 s (depends on machine load) | – |
+| Model reference accelerator (controller and asset models as MEX) | 191 s (10 models, serial, cached in `work/`) | 3.4 s | 0 |
+| Top and model references accelerator | +6 s | 2.0–2.8 s | 0 |
+| **Rapid Accelerator** | 20–50 s | **1.4–2.2 s** | 0 (≤ 2e-12 in all case sets) |
+
+**Rapid Accelerator in use** (`scripts/rapidTarget.m`, `runCase` / `runSweep` with `Mode="rapid"`, default in `main.m`): the target is built once and every run passes its own `p` with `RapidAcceleratorUpToDateCheck` off, so it skips Simulink's own check. `rapidTarget` rebuilds when the compile signature (layout, time step, communication delays, network model) or a model file in `models/` changes. All seven case sets (46 cases) run in 68 s (about 15 min in normal mode); for example `hppc_qv` 16 cases in 23 s instead of 328 s.
+
+**Parallel runs do not help here:** `hppc_qv` on 3 parsim workers took 101 s (plus 29 s to start the pool) against 24 s serial, with identical results. A Rapid Accelerator run takes ~1.5 s and parsim's overhead per run (transfer of the target and data, collecting the output) is larger. A pool would pay off only for long runs (Simscape network, long stop times); `runSweep(..., Mode="rapid", UseParallel=true)` keeps that option. The `Processes` profile is capped at 2 workers; a script can raise this per session (`c = parcluster("Processes"); c.NumWorkers = 3`) without changing the profile.
+
+**Tunable block expressions.** Compiled code (accelerator, Rapid Accelerator, the later DLLs) keeps a block parameter that uses a model argument (`par`, `ap`) tunable only if it is simple arithmetic (+ − × ÷). The first builds failed on `par.PF^2`, `sqrt`, comparisons (`par.RefFlag == 1`, `double(par.MqG == 1)`) and a Transfer Fcn denominator `[ap.gen.Tg 1]`. Fixed by computing derived values in `controllerParameters` (`par.tanphi`, `par.isV`, `par.isPF`, `par.KpQ`, `par.KiQ`, `par.MqG1`) and building the converter current lags from gain 1/Tg and an integrator (`contLag` in `buildHPP.m`, the same dynamics). Expressions inside MATLAB Function code are not affected.

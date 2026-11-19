@@ -7,7 +7,9 @@ tic
 setName  = "nominal";                 % case set in scripts/+caseSets
 caseIds  = [];     % names or numbers, e.g. [1 4 7]; [] = all cases
 rerun    = true;                      % false = reuse saved results where they exist
-fastRestart = true;                   % keep the model compiled between runs (reruns skip the compile)
+mode     = "rapid";                   % "rapid": compiled once, ~1.5-2 s per 60 s case (fastest);
+                                      % "normal": for debugging with scopes inside the models
+fastRestart = true;                   % normal mode only: keep the model compiled between runs
 network  = "nodal";                   % "nodal" (fast) or "simscape" (Simscape Electrical, ~5x slower)
 signals  = ["P_poc", "Q_poc", "V_poc", "P_wpp", "P_spp", "P_bess", "SOC"];
 theme    = "auto";                    % "auto" (MATLAB theme), "light" or "dark"
@@ -33,7 +35,7 @@ for k = 1:height(cases)
             % no saved result for this case: run it below
         end 
     end
-    out(k) = runCase(setName, id, Network=network, FastRestart=fastRestart);
+    out(k) = runCase(setName, id, Network=network, Mode=mode, FastRestart=fastRestart);
 end
 
 % Summary

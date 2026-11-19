@@ -94,6 +94,19 @@ function ctrl = controllerParameters(p)
         ctrl.hppc.par.QmaxOrd = p.hppc.Qmax;
         ctrl.hppc.par.QminOrd = p.hppc.Qmin;
     end
+    % Derived values for block parameters: blocks that use model arguments
+    % may only use + - * / to stay tunable in generated code (accelerator,
+    % DLL), so flags, tan(phi) and the mode-dependent Q PI gains are computed here
+    ctrl.hppc.par.isV    = double(p.hppc.RefFlag == 1);          % voltage control
+    ctrl.hppc.par.isPF   = double(p.hppc.RefFlag == 2);          % power factor control
+    ctrl.hppc.par.tanphi = p.hppc.PFsign * sqrt(1 / p.hppc.PF^2 - 1);
+    if p.hppc.RefFlag == 1
+        ctrl.hppc.par.KpQ = ctrl.hppc.par.KpVn / ctrl.hppc.par.LV;
+        ctrl.hppc.par.KiQ = ctrl.hppc.par.KiVn / ctrl.hppc.par.LV;
+    else
+        ctrl.hppc.par.KpQ = p.hppc.Kpq;
+        ctrl.hppc.par.KiQ = p.hppc.Kiq;
+    end
 
     % Cascade check: every level must be clearly slower than the one under
     % it. Speed = closed-loop time constant of the PI, about (1 + Kp)/Ki with
@@ -127,6 +140,7 @@ function ctrl = controllerParameters(p)
     for f = string(fieldnames(p.wt.iec.ctrl))'     % IEC 61400-27-1 Type 4A control
         ctrl.wt.par.(f) = p.wt.iec.ctrl.(f);
     end
+    ctrl.wt.par.MqG1 = double(p.wt.iec.ctrl.MqG == 1);   % closed-loop Q flag (block parameter, see above)
     ctrl.pv   = assetCtrl(p.sim.Ts, p.pv.nAgg * p.pv.Pn);
     ctrl.pv.par = copyFields(ctrl.pv.par, p.pv.wecc.ctrl);         % WECC REEC_B
     ctrl.bess = assetCtrl(p.sim.Ts, p.bess.nAgg * p.bess.Pn);
