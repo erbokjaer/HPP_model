@@ -51,15 +51,20 @@ function p = deriveParameters(p)
         p.pll.(g) = q;
     end
 
+    % the asset PLL is part of each asset controller (par.pll)
+    for t = ["wt", "pv", "bess"]
+        p.ctrl.(t).par.pll = p.pll.asset;
+        p.ctrl.(t).par.pll.Ts = p.ctrl.(t).Ts;     % the PLL runs at the controller's rate
+    end
+
     % Asset model arguments, one per instance (identical for now)
-    p.wt.ap = repmat(struct("ctrl", p.ctrl.wt.par, "gen", p.wt.iec.gen, "pll", p.pll.asset), p.wt.N, 1);
-    p.pv.ap = repmat(struct("ctrl", p.ctrl.pv.par, "gen", p.pv.wecc.gen, "pll", p.pll.asset), p.pv.N, 1);
+    p.wt.ap = repmat(struct("ctrl", p.ctrl.wt.par, "gen", p.wt.iec.gen), p.wt.N, 1);
+    p.pv.ap = repmat(struct("ctrl", p.ctrl.pv.par, "gen", p.pv.wecc.gen), p.pv.N, 1);
 
     Eunit = p.bess.E / p.bess.N;                       % [J] per instance
     p.bess.ap = repmat(struct( ...
         "ctrl", p.ctrl.bess.par, ...
         "gen", p.bess.wecc.gen, ...
-        "pll", p.pll.asset, ...
         "SOC0", p.bess.SOC0, ...
         "kSOC", p.ctrl.bess.Pbase / Eunit), ...        % [1/s] dSOC/dt per pu power
         p.bess.N, 1);
