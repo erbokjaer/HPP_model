@@ -5,7 +5,7 @@ function cases = bess_soc()
 %   discharge (charge) linearly to zero over hppc.SOCband (0.1) above SOCmin
 %   (below SOCmax); at SOCmin / SOCmax the BESS controller (REEC_C) also
 %   blocks discharge / charge. The "+20 MW" cases step P_ref at 40 s, so the
-%   BESS has to discharge (120 s runs, ramp 36 MW/min).
+%   BESS has to discharge (ramp 36 MW/min). All cases run 120 s.
 
     up = {"grid.Pstep.dP", 20e6, "sim.Tstop", 120};
     cases = caseList({
@@ -17,4 +17,5 @@ function cases = bess_soc()
         "SOC0 0.5, +20 MW",   up
         "SOC0 0.15, +20 MW",  [up, {"bess.SOC0", 0.15}]
     });
+    cases.("sim.Tstop")(:) = 120;  % same stop time for all cases, so they plot on one time axis
 end
