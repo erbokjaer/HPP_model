@@ -506,6 +506,142 @@ function buildNetwork(sys)
         "Solves V = Z*I each step. Data from networkSolverData(p).";
 end
 
+function buildNetworkDq(sys)
+    % Dq network (stage 8): as buildNetwork, but the network solution is the
+    % discrete state-space model of networkDqData (electromagnetic dynamics
+    % in the dq frame) instead of V = Z*I. --- From buildNetwork:
+    % Masked subsystem: positive-sequence phasor network (collector
+    % system, transformers, grid), solved as V = Z*I every step in one
+    % MATLAB Function block. Mask parameter "net" = p.net.solver
+    % (networkSolverData). In: current injections per plant (buses,
+    % system pu). Out: 1 network bus to the plants (V_re, V_im of all
+    % asset terminals one step old, P_plant / Q_plant [W / var] per plant
+    % into the busbar, V_bus [pu], grid frequency f [pu]); 2 POC bus
+    % (P_poc [W], Q_poc [var], V_poc [pu]), power into the grid.
+    % Layout as the controllers (rowChain): injections and grid source |
+    % network solution | output buses, signals passed with Goto/From.
+    newSubsystem(sys);
+    cm.ref  = ["I_re_wpp", "I_im_wpp", "I_re_spp", "I_im_spp", "I_re_bess", "I_im_bess", "I_re", "I_im", "E"];
+    cm.meas = ["V_re", "V_im", "V_re_prev", "V_im_prev", "V_bus", "V_poc", "P_plant", "Q_plant", ...
+               "P_poc", "Q_poc", "P_plant_pu", "Q_plant_pu", "P_poc_pu", "Q_poc_pu", ...
+               "V_bus_re", "V_bus_im", "V_poc_re", "V_poc_im"];
+
+    % ---- current injections (system pu) and grid source voltage ----
+    tags = ["wpp", "spp", "bess"];
+    for i = 1:3
+        add_block("simulink/Sources/In1", sys + "/I " + tags(i), "Port", num2str(i), "Position", [0 0 30 14]);
+        add_block("simulink/Signal Routing/Bus Selector", sys + "/I sel " + tags(i), ...
+            "Position", [0 0 6 60], "ShowName", "off");
+    end
+    add_block("simulink/Signal Routing/Mux", sys + "/I_re all", "Inputs", "3", "Position", [0 0 6 90]);
+    add_block("simulink/Signal Routing/Mux", sys + "/I_im all", "Inputs", "3", "Position", [0 0 6 90]);
+    add_block("simulink/Sources/Constant", sys + "/E0", "Value", "dq.E", "Position", [0 0 50 24]);
+    add_block("simulink/Sources/Step", sys + "/dip start", "Time", "p.grid.dip.t0", ...
+        "Before", "0", "After", "p.grid.dip.depth", "SampleTime", "0", "Position", [0 0 30 30]);
+    add_block("simulink/Sources/Step", sys + "/dip end", "Time", "p.grid.dip.t0 + p.grid.dip.dur", ...
+        "Before", "0", "After", "p.grid.dip.depth", "SampleTime", "0", "Position", [0 0 30 30]);
+    nb(sys, "sum", "E grid", "Inputs", "+-+");
+    set_param(sys + "/E grid", "Position", [0 0 30 170]);
+    rows = cell(0, 1);
+    for i = 1:3
+        rows{end+1, 1} = [stg("I " + tags(i), 0), stg("I sel " + tags(i), 1, {}, {2, "I_im_" + tags(i)}), ...
+                          stg(">I_re_" + tags(i))]; %#ok<AGROW>
+    end
+    rows = [rows
+        {[stg("@I_re_wpp", 0), stg("I_re all", 1, {2, "@I_re_spp"; 3, "@I_re_bess"}), stg(">I_re")]}
+        {[stg("@I_im_wpp", 0), stg("I_im all", 1, {2, "@I_im_spp"; 3, "@I_im_bess"}), stg(">I_im")]}
+        {[stg("E0", 0), stg("E grid", 1, {2, "dip start"; 3, "dip end"}), stg(">E")]}];
+    % bus selectors need their elements before rowChain sizes the rows
+    for i = 1:3
+        set_param(sys + "/I sel " + tags(i), "OutputSignals", "I_re,I_im");
+    end
+    [~, hIn, rIn] = ctrlSection(sys, "Current injections and grid source (dip)", rows, 40, 20, cm, areaColor("interface"));
+
+    % ---- network solution: discrete state-space model in the dq frame ----
+    outs = ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "P_poc", "Q_poc", "V_poc", ...
+            "V_bus_re", "V_bus_im", "V_poc_re", "V_poc_im"];
+    body = [
+        "% x[k+1] = Ad x[k] + Bd u[k], y = Cy x[k+1] + Dy u[k] (networkDqData): exact"
+        "% zero-order hold at Ts; real form [real; imag]; u = [I (nA); E e^(j theta)]."
+        "% Numeric data are (tunable) inputs; dq holds the sizes and the plant index."
+        "persistent x"
+        "Ec = E * exp(1i * theta);                 % grid source, rotated by the grid angle"
+        "u = [I_re(:); real(Ec); I_im(:); imag(Ec)];"
+        "if isempty(x)"
+        "    x = X0 * u;                           % steady state of the first input"
+        "end"
+        "x = Ad * x + Bd * u;"
+        "y = Cy * x + Dy * u;"
+        "ny = dq.ny;  nA = dq.nA;"
+        "yc = complex(y(1:ny), y(ny+1:2*ny));"
+        "V_re = real(yc(1:nA));  V_im = imag(yc(1:nA));"
+        "Vb = yc(nA + 1);  Vp = yc(nA + 2);  Ig = yc(nA + 3);"
+        "% power each plant delivers into the HPP busbar (as in the nodal network)"
+        "Sbr = Vb .* conj(yc(nA + 4:ny));"
+        "P_plant = zeros(3, 1);  Q_plant = zeros(3, 1);"
+        "for j = 1:dq.nBr"
+        "    P_plant(dq.brPlant(j)) = P_plant(dq.brPlant(j)) + real(Sbr(j));"
+        "    Q_plant(dq.brPlant(j)) = Q_plant(dq.brPlant(j)) + imag(Sbr(j));"
+        "end"
+        "V_bus = abs(Vb);"
+        "Spoc = Vp * conj(Ig);                     % power into the grid"
+        "P_poc = real(Spoc);  Q_poc = imag(Spoc);  V_poc = abs(Vp);"
+        "V_bus_re = real(Vb);  V_bus_im = imag(Vb);"
+        "V_poc_re = real(Vp);  V_poc_im = imag(Vp);"];
+    ins = ["I_re", "I_im", "E", "Ad", "Bd", "X0", "Cy", "Dy", "theta"];
+    add_block("simulink/Sources/In1", sys + "/theta", "Port", "5", "Position", [0 0 30 14]);
+    addMatlabFunction(sys + "/solve", "solve_dq", ins, outs, body, "dq", [0 0 160 360]);
+    setChartTs(sys + "/solve", "p.sim.Ts");   % discrete: the state x is persistent
+    % sizes and plant index fixed at compile time; the matrices are tunable
+    % constants (grid strength, cable and transformer data change without recompiling)
+    dd = sfroot().find("-isa", "Stateflow.EMChart", "Path", char(sys + "/solve")).find("-isa", "Stateflow.Data", "Name", "dq");
+    dd.Tunable = false;
+    vals = ["dq.Ad", "dq.Bd", "dq.X0", "dq.Cy", "dq.Dy"];
+    for j = 1:5
+        kc(sys, ins(3 + j), vals(j));
+    end
+    outTags = ["V_re", "V_im", "P_plant_pu", "Q_plant_pu", "V_bus", "P_poc_pu", "Q_poc_pu", "V_poc", ...
+               "V_bus_re", "V_bus_im", "V_poc_re", "V_poc_im"];
+    outsS = [num2cell((2:12)'), num2cell(outTags(2:12)')];
+    sidesS = [{2, "@I_im"; 3, "@E"}; num2cell((4:8)'), num2cell(ins(4:8)'); {9, "theta"}];
+    rowsS = {[stg("@I_re", 0), stg("solve", 1, sidesS, outsS), stg(">" + outTags(1))]};
+    [~, hS, rS] = ctrlSection(sys, "Network dynamics, x[k+1] = Ad x[k] + Bd u[k] (dq frame)", rowsS, rIn + 90, 20, cm, areaColor("asset"));
+
+    % ---- output buses: terminal voltages one step old (generator "PLL";
+    %      avoids an algebraic loop), powers from system pu to W / var ----
+    add_block("simulink/Discrete/Memory", sys + "/V_re prev", "InitialCondition", "ones(dq.nA,1)", "Position", [0 0 30 30]);
+    add_block("simulink/Discrete/Memory", sys + "/V_im prev", "InitialCondition", "zeros(dq.nA,1)", "Position", [0 0 30 30]);
+    for s = ["P_plant", "Q_plant", "P_poc", "Q_poc"]
+        nb(sys, "gain", s + " to SI", "Gain", "dq.Sb");
+    end
+    add_block("simulink/Sources/In1", sys + "/f grid", "Port", "4", "Position", [0 0 30 14]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/network bus", "Inputs", "8", "Position", [0 0 6 400]);
+    add_block("simulink/Signal Routing/Bus Creator", sys + "/POC bus", "Inputs", "5", "Position", [0 0 6 250]);
+    add_block("simulink/Sinks/Out1", sys + "/network", "Port", "1", "Position", [0 0 30 14]);
+    add_block("simulink/Sinks/Out1", sys + "/POC meas", "Port", "2", "Position", [0 0 30 14]);
+    rowsO = {
+        [stg("@V_im", 0), stg("V_im prev"), stg(">V_im_prev")]
+        [stg("@P_plant_pu", 0), stg("P_plant to SI"), stg(">P_plant")]
+        [stg("@Q_plant_pu", 0), stg("Q_plant to SI"), stg(">Q_plant")]
+        [stg("@V_re", 0), stg("V_re prev"), stg("network bus", 1, {2, "@V_im_prev"; 3, "@P_plant"; 4, "@Q_plant"; ...
+         5, "@V_bus"; 6, "f grid"; 7, "@V_bus_re"; 8, "@V_bus_im"}), stg("network")]
+        [stg("@P_poc_pu", 0), stg("P_poc to SI"), stg(">P_poc")]
+        [stg("@Q_poc_pu", 0), stg("Q_poc to SI"), stg(">Q_poc")]
+        [stg("@P_poc", 0), stg("POC bus", 1, {2, "@Q_poc"; 3, "@V_poc"; 4, "@V_poc_re"; 5, "@V_poc_im"}), stg("POC meas")]};
+    [~, hO] = ctrlSection(sys, "Output buses (V one step old, powers in W and var)", rowsO, rS + 90, 20, cm, areaColor("interface"));
+    % bus element names come from the names of the lines into the creators
+    nameInputs(sys + "/network bus", ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "f", "V_bus_re", "V_bus_im"]);
+    nameInputs(sys + "/POC bus", ["P_poc", "Q_poc", "V_poc", "V_poc_re", "V_poc_im"]);
+    alignColumns(hIn, hS, hO);
+
+    mk = Simulink.Mask.create(sys);
+    mk.addParameter("Name", "dq", "Prompt", "dq network data", "Value", "p.net.dq", ...
+        "Evaluate", "on", "Tunable", "on");   % tunable: the matrices (constants) change without recompiling
+    mk.Description = "Positive-sequence network in the dq frame (collector system, transformers, grid) " + ...
+        "with its electromagnetic dynamics: discrete state-space model, exact zero-order hold at the " + ...
+        "simulation step. Data from networkDqData(p). Same ports as the nodal network.";
+end
+
 function nameInputs(blk, names)
     ph = get_param(blk, "PortHandles");
     for k = 1:numel(names)
@@ -2513,6 +2649,7 @@ function buildNetworkVariants(sys, p)
     % Variant Subsystem "Network" with the two network models as choices:
     %   Nodal    (HPP_network == 1): nodal solver Z = inv(Y), fast
     %   Simscape (HPP_network == 2): Simscape Electrical, frequency-and-time mode
+    %   Dq       (HPP_network == 3): state-space network in the dq frame (stage 8)
     % Both have the same ports. The variant control variable HPP_network is
     % set per run by runCase (networkCode(p.net.solverType)); the default for
     % runs from the editor is in the model workspace. Activation at update
@@ -2525,8 +2662,10 @@ function buildNetworkVariants(sys, p)
     if ~isempty(L), delete_line(L); end
     buildNetwork(sys + "/Nodal");
     buildNetworkSimscape(sys + "/Simscape", p);
+    buildNetworkDq(sys + "/Dq");
     set_param(sys + "/Nodal", "VariantControl", "HPP_network == 1", "Position", [200 50 400 250]);
     set_param(sys + "/Simscape", "VariantControl", "HPP_network == 2", "Position", [200 300 400 500]);
+    set_param(sys + "/Dq", "VariantControl", "HPP_network == 3", "Position", [200 550 400 750]);
     tags = ["wpp", "spp", "bess"];
     for i = 1:3
         add_block("simulink/Sources/In1", sys + "/I " + tags(i), "Port", num2str(i), "Position", [40 40*i 70 40*i+14]);
@@ -2537,7 +2676,8 @@ function buildNetworkVariants(sys, p)
     add_block("simulink/Sinks/Out1", sys + "/POC meas", "Port", "2", "Position", [520 120 550 134]);
     set_param(sys, "VariantActivationTime", "update diagram", "Description", ...
         "Network model, chosen per run: Nodal (HPP_network = 1, fast nodal solver) or Simscape " + ...
-        "(HPP_network = 2, Simscape Electrical in frequency-and-time mode). See runCase, option Network.");
+        "(HPP_network = 2, Simscape Electrical in frequency-and-time mode) or Dq (HPP_network = 3, " + ...
+        "state-space network in the dq frame). See runCase, option Network.");
 end
 
 % ---------------------------------------------------------------------

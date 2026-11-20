@@ -71,4 +71,6 @@ function p = deriveParameters(p)
 
     % Network solver data (Z matrix etc.), depends on N and ratings
     p.net.solver = networkSolverData(p);
+    % dq network (stage 8): the same network as a state-space model
+    p.net.dq = networkDqData(p);
 end

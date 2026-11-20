@@ -6,7 +6,7 @@ function out = runSweep(setName, opts)
 %   out = runSweep("grid_Pref_Pbess", UseParallel=true)   parsim, local pool
 %   out = runSweep(..., Save=false)               don't write a results file
 %   out = runSweep(..., Network="nodal")          network model: "nodal" (fast)
-%                                                 or "simscape"; default
+%                                                 "simscape" or "dq"; default
 %                                                 p.net.solverType
 %   out = runSweep(..., Mode="rapid")             Rapid Accelerator (fastest):
 %                                                 the model is compiled once
@@ -59,7 +59,7 @@ function out = runSweep(setName, opts)
         setName (1,1) string = "nominal"
         opts.UseParallel (1,1) logical = false
         opts.Save (1,1) logical = true
-        opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape"])} = ""
+        opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape", "dq"])} = ""
         opts.FastRestart (1,1) logical = false
         opts.Mode (1,1) string {mustBeMember(opts.Mode, ["normal", "rapid"])} = "normal"
         opts.Delays (1,1) string {mustBeMember(opts.Delays, ["", "auto", "fixed", "variable"])} = ""

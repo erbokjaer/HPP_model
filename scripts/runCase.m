@@ -26,8 +26,10 @@ function out = runCase(setName, caseId, opts)
 %   runCase(..., Network="nodal")             network model for this run:
 %                                             "nodal" (fast nodal solver) or
 %                                             "simscape" (Simscape Electrical,
-%                                             about 5 times slower); default
-%                                             p.net.solverType
+%                                             about 5 times slower) or "dq"
+%                                             (state-space network with its
+%                                             electromagnetic dynamics);
+%                                             default p.net.solverType
 %   runCase(..., Delays="variable")           how the communication delays
 %                                             are compiled: "fixed" (fastest),
 %                                             "variable" (tunable, for delay
@@ -58,7 +60,7 @@ function out = runCase(setName, caseId, opts)
         caseId = []
         opts.Mode (1,1) string {mustBeMember(opts.Mode, ["normal","accelerator","rapid"])} = "normal"
         opts.Save (1,1) logical = true
-        opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape"])} = ""
+        opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape", "dq"])} = ""
         opts.FastRestart (1,1) logical = false
         opts.Delays (1,1) string {mustBeMember(opts.Delays, ["", "auto", "fixed", "variable"])} = ""
     end

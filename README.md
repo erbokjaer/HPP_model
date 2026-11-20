@@ -121,6 +121,7 @@ A case set is a function in `scripts/+caseSets/` that returns a table. Each colu
 | `bess_soc` | `SOC0 0.5`, `SOC0 0.15`, `at SOCmin`, `SOC0 0.85`, `at SOCmax`, `SOC0 0.5, +20 MW`, `SOC0 0.15, +20 MW` | `caseList` |
 | `sys_freq` | swing-equation grid (`p.grid.sys.swing = 1`, 2 GW Nordic-like): `swing, no event`, loss of 3.5 % with the HPP response off / LFSM / FSM / FSM at H 2 s, `load drop 3.5 %, LFSM` (event at 40 s, 90 s runs) | `caseList` |
 | `pll_scr` | PLL bandwidth (2, 5, 10, 20 Hz) × SCR (10, 3, 1.5), 20° phase jump of the grid source at 40 s (`p.grid.pjump`), 60 s runs; 20 Hz with the one-cycle prefilter is unstable | `caseGrid` |
+| `dq_network` | validation of the dq network (stage 8) against the nodal one: nominal, P_ref −30 MW, Q_ref +30 Mvar, 10 % dip, at SCR 10 and 3; run with `Network="nodal"` and `Network="dq"` (60 s) | `caseList` |
 
 To add a set, copy one of these files, rename it and edit it. Nothing else needs to change. Three helpers build the table:
 

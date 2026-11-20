@@ -11,7 +11,8 @@ rerun    = true;                      % false = reuse saved results where they e
 mode     = "rapid";                   % "rapid": compiled once, ~1.5-2 s per 60 s case (fastest);
                                       % "normal": for debugging with scopes inside the models
 fastRestart = true;                   % normal mode only: keep the model compiled between runs
-network  = "nodal";                   % "nodal" (fast) or "simscape" (Simscape Electrical, ~5x slower)
+network  = "nodal";                   % "nodal" (fast), "simscape" (Simscape Electrical, ~5x slower)
+                                      % or "dq" (state-space network with electromagnetic dynamics)
 delays   = "fixed";                    % "fixed" (fastest), "variable" (delay sweeps without rebuilding)
                                       % or "auto" (variable if the case set changes a delay)
 signals  = ["P_poc", "Q_poc", "V_poc", "P_wpp", "P_spp", "P_bess", "SOC"];
