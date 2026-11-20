@@ -9,6 +9,8 @@ function p = deriveParameters(p)
 %     p.wt.ap, p.pv.ap, p.bess.ap   per-instance arguments of the asset
 %                          models (N-by-1 struct arrays); HPP.slx passes
 %                          p.<type>.ap(k) to asset instance k
+%     p.pll.asset, .hppc, .wppc, .sppc, .bessc   PLL gains kp, ki and
+%                          window lengths in steps
 
     for t = ["wt", "pv", "bess"]
         p.(t).N      = p.(t).nFeeders * p.(t).nPerFeeder;
@@ -26,6 +28,34 @@ function p = deriveParameters(p)
     end
 
     p.ctrl = controllerParameters(p);
+
+    % PLL gains and window lengths in steps (pllParameters): kp = 2 zeta wn,
+    % ki = wn^2; windows as whole steps, within the fixed buffer sizes of
+    % the PLL code (pllBody in buildHPP: 50 steps, RoCoF 1000 steps)
+    for g = ["asset", "hppc", "wppc", "sppc", "bessc"]
+        q = p.pll.(g);
+        wn = 2 * pi * q.fBW;
+        q.kp = 2 * q.zeta * wn;
+        q.ki = wn^2;
+        q.Npre = max(1, round(q.Tpre / p.sim.Ts));
+        if g ~= "asset"
+            q.Navg = max(1, round(q.Tavg / p.sim.Ts));
+            q.Nroc = max(1, round(q.Trocof / p.sim.Ts));
+        else
+            q.Navg = 1;  q.Nroc = 1;
+        end
+        q.f0 = p.grid.f0;
+        q.Ts = p.sim.Ts;
+        assert(q.Npre <= 50 && q.Navg <= 50 && q.Nroc <= 1000, ...
+            "pll.%s: Tpre and Tavg must be at most 50 steps, Trocof at most 1000 steps", g);
+        p.pll.(g) = q;
+    end
+
+    % the asset PLL is part of each asset controller (par.pll)
+    for t = ["wt", "pv", "bess"]
+        p.ctrl.(t).par.pll = p.pll.asset;
+        p.ctrl.(t).par.pll.Ts = p.ctrl.(t).Ts;     % the PLL runs at the controller's rate
+    end
 
     % Asset model arguments, one per instance (identical for now)
     p.wt.ap = repmat(struct("ctrl", p.ctrl.wt.par, "gen", p.wt.iec.gen), p.wt.N, 1);

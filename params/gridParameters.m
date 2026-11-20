@@ -35,6 +35,11 @@ function grid = gridParameters()
     grid.fev.t0 = 40;        % [s]  time of the step
     grid.fev.df = 0;         % [pu] frequency change (0.004 = +0.2 Hz)
 
+    % Phase jump of the grid source (stage 7: excites the PLLs), e.g. a line
+    % trip that changes the angle across the grid impedance; dphi 0 = none
+    grid.pjump.t0   = 40;    % [s]
+    grid.pjump.dphi = 0;     % [rad] (+ = grid angle ahead; 20 deg = 0.349)
+
     % Imposed frequency profile (sys.swing = 0): piecewise linear deviation
     % from f0, pu, added to the step above. 10 points (fixed size); unused
     % points at large times. For the Energinet test profiles.
