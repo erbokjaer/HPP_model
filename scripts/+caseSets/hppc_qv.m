@@ -14,6 +14,7 @@ function cases = hppc_qv()
 %   before the POC limit; grid -10 % from 40 to 60 s. With anti-windup the
 %   HPPC holds its order while all plants are saturated and Q recovers right
 %   after the voltage returns; without it the HPPC order winds up.
+%   All cases run 90 s (the Q-limit cases need the time to settle).
 
     vdrop = {"grid.dip.depth", 0.02, "grid.dip.t0", 40, "grid.dip.dur", 100};
     vctrl = {"hppc.RefFlag", 1};
@@ -36,4 +37,5 @@ function cases = hppc_qv()
         "PF 0.95 export"            {"hppc.RefFlag", 2, "hppc.PF", 0.95}
         "PF 0.95 import"            {"hppc.RefFlag", 2, "hppc.PF", 0.95, "hppc.PFsign", -1}
     });
+    cases.("sim.Tstop")(:) = 90;   % same stop time for all cases, so they plot on one time axis
 end

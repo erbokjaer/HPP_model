@@ -148,7 +148,7 @@ function files = reportMode(opts, folder)
         end
         files = [files, exportFigure(fh, folder, f.name, opts)]; %#ok<AGROW>
         fprintf("%-24s %s\n", f.name, f.what);
-        if ~opts.Show, close(fh); end
+        showOrClose(fh, opts);
     end
 end
 
@@ -205,7 +205,7 @@ function files = debugMode(opts, folder, root)
             lg = legend(ax(1), "Interpreter", "none");  lg.Layout.Tile = 12;
             title(t, s + views{v, 1} + "  (results/" + s + ")", "Interpreter", "none");
             files = [files, exportFigure(fh, folder, s + views{v, 1}, opts)]; %#ok<AGROW>
-            if ~opts.Show, close(fh); end
+            showOrClose(fh, opts);
         end
         fprintf("%-16s %d case(s)\n", s, numel(out));
     end
@@ -227,9 +227,22 @@ function n = dashedNote(g)
 end
 
 %% ---------------------------------------------------------------- helpers
+function showOrClose(fh, opts)
+    % the figure is drawn and saved invisible at its set size; afterwards it
+    % is docked and shown (Show) or closed
+    if opts.Show
+        fh.WindowStyle = "docked";
+        fh.Visible = "on";
+    else
+        close(fh);
+    end
+end
+
 function fh = newFigure(opts, W, H, name)
-    vis = "off";  if opts.Show, vis = "on"; end
-    fh = figure("Visible", vis, "Units", "centimeters", "Position", [2 2 W H], "Color", "w", ...
+    % always invisible and undocked while drawing and saving, so the saved
+    % size is the set size (a docked figure takes the size of the dock);
+    % showOrClose docks it afterwards
+    fh = figure("Visible", "off", "Units", "centimeters", "Position", [2 2 W H], "Color", "w", ...
         "Name", name, "NumberTitle", "off", "WindowStyle", "normal");
     try, theme(fh, "light"); catch, end
     set(fh, "DefaultAxesFontName", opts.FontName, "DefaultAxesFontSize", opts.FontSize, ...
