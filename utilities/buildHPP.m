@@ -83,6 +83,16 @@ function buildHPP(opts)
     restoreWarn = onCleanup(@() warning(ws0));
 
     if opts.All
+        % PLL and FreqMeter first (referenced by the asset controllers and the
+        % plant / HPP subsystems); created if missing, then maintained in Simulink
+        for nm = ["PLL", "FreqMeter"]
+            if ~isempty(opts.Only) && ~any(opts.Only == nm), continue, end
+            if opts.Overwrite || ~isfile(fullfile(dirs.ctrl, nm + ".slx"))
+                if nm == "PLL", buildPllModel(dirs.ctrl); else, buildFreqMeterModel(dirs.ctrl); end
+            else
+                fprintf("Kept existing %s.slx\n", nm);
+            end
+        end
         % controllers before assets (assets reference the asset controllers)
         specs = controllerSpecs();
         for k = 1:numel(specs)
@@ -804,12 +814,11 @@ function buildAsset(type, folder)
     if src ~= "", ins(end+1) = src; end
     [hIn, x] = ctrlInputs(mdl, ins, repmat("1", 1, numel(ins)), cm, "-1");
 
-    % terminal measurements: |V|, P and Q one step old
-    addMatlabFunction(mdl + "/terminal", "terminal", ["V_re", "V_im"], "V_term", ...
-        "V_term = sqrt(V_re^2 + V_im^2);", "", [0 0 90 60]);
+    % terminal measurements: |V| = hypot(V_re, V_im), P and Q one step old
+    nb(mdl, "math", "|V|", "Operator", "hypot");
     nb(mdl, "mem", "P meas");  nb(mdl, "mem", "Q meas");
     rowsM = {
-        [stg("@V_re", 0), stg("terminal", 1, {2, "@V_im"}), stg(">V_term")]
+        [stg("@V_re", 0), stg("|V|", 1, {2, "@V_im"}), stg(">V_term")]
         [stg("@P", 0), stg("P meas"), stg(">P_meas")]
         [stg("@Q", 0), stg("Q meas"), stg(">Q_meas")]};
     [y, h1, r1] = ctrlSection(mdl, "Terminal measurements", rowsM, x, 20, cm, areaColor("interface"));
@@ -833,15 +842,24 @@ function buildAsset(type, folder)
     % the PLL angle th (c = cos th, s = sin th): I = (ip - j*iq) * e^(j th).
     % P + jQ = V * conj(I) (+ = export / capacitive); with an ideal PLL
     % (th = angle of V) this is P = |V|*ip, Q = |V|*iq
-    gen = [
-        "I_re = ip*c + iq*s;"
-        "I_im = ip*s - iq*c;"
-        "P = V_re*I_re + V_im*I_im;"
-        "Q = V_im*I_re - V_re*I_im;"];
-    addMatlabFunction(mdl + "/generator", "generator", ["ip", "iq", "V_re", "V_im", "c", "s"], ...
-        ["P", "Q", "I_re", "I_im"], gen, "", [0 0 120 180]);
-    rowGen = [stg("@ip", 0), stg("generator", 1, {2, "@iq"; 3, "@V_re"; 4, "@V_im"; 5, "@pll_c"; 6, "@pll_s"}, ...
-              {2, "Q"; 3, "I_re"; 4, "I_im"}), stg(">P")];
+    %   I_re = ip c + iq s,  I_im = ip s - iq c,
+    %   P = V_re I_re + V_im I_im,  Q = V_im I_re - V_re I_im
+    for nm = ["ip c", "iq s", "ip s", "iq c", "V_re I_re", "V_im I_im", "V_im I_re", "V_re I_im"]
+        nb(mdl, "prod", nm);
+    end
+    nb(mdl, "sum", "I_re sum", "Inputs", "++");  nb(mdl, "sum", "I_im sum", "Inputs", "+-");
+    nb(mdl, "sum", "P sum", "Inputs", "++");     nb(mdl, "sum", "Q sum", "Inputs", "+-");
+    rowGen = {
+        [stg("@ip", 0), stg("ip c", 1, {2, "@pll_c"}), stg(">ip_c")]
+        [stg("@iq", 0), stg("iq s", 1, {2, "@pll_s"}), stg(">iq_s")]
+        [stg("@ip", 0), stg("ip s", 1, {2, "@pll_s"}), stg(">ip_s")]
+        [stg("@iq", 0), stg("iq c", 1, {2, "@pll_c"}), stg(">iq_c")]
+        [stg("@ip_c", 0), stg("I_re sum", 1, {2, "@iq_s"}), stg(">I_re")]
+        [stg("@ip_s", 0), stg("I_im sum", 1, {2, "@iq_c"}), stg(">I_im")]
+        [stg("@V_im", 0), stg("V_im I_im", 1, {2, "@I_im"}), stg(">ViIi")]
+        [stg("@V_re", 0), stg("V_re I_im", 1, {2, "@I_im"}), stg(">VrIi")]
+        [stg("@V_re", 0), stg("V_re I_re", 1, {2, "@I_re"}), stg("P sum", 1, {2, "@ViIi"}), stg(">P")]
+        [stg("@V_im", 0), stg("V_im I_re", 1, {2, "@I_re"}), stg("Q sum", 1, {2, "@VrIi"}), stg(">Q")]};
     if type == "WT"
         % IEC 61400-27-1 Type 4 generator system: current rate limits, then
         % a first-order lag Tg (active current: only its rise is limited)
@@ -849,10 +867,9 @@ function buildAsset(type, folder)
         contLag(mdl, "Tg ip", "ap.gen.Tg");
         nb(mdl, "rate", "diqmax", "RisingSlewLimit", "ap.gen.diqmax", "FallingSlewLimit", "-ap.gen.diqmax");
         contLag(mdl, "Tg iq", "ap.gen.Tg");
-        rowsG = {
+        rowsG = [{
             [stg("@ip_cmd", 0), stg("dipmax"), stg("Tg ip"), stg(">ip")]
-            [stg("@iq_cmd", 0), stg("diqmax"), stg("Tg iq"), stg(">iq")]
-            rowGen};
+            [stg("@iq_cmd", 0), stg("diqmax"), stg("Tg iq"), stg(">iq")]}; rowGen];
         gTitle = "Generator system (IEC 61400-27-1 Type 4)";
     else
         % WECC REGC_A: Ip recovery ramp Rrpwr, Iq ramps Iqrmax/Iqrmin, lag Tg;
@@ -862,27 +879,39 @@ function buildAsset(type, folder)
         contLag(mdl, "Tg ip", "ap.gen.Tg");
         nb(mdl, "rate", "Iqrmax", "RisingSlewLimit", "ap.gen.Iqrmax", "FallingSlewLimit", "ap.gen.Iqrmin");
         contLag(mdl, "Tg iq", "ap.gen.Tg");
-        lv = [
-            "v = sqrt(V_re^2 + V_im^2);"
-            "g = ap.gen;"
-            "% LVPL: limit on Ip, 0 at Zerox rising to Lvpl1 at Brkpt"
-            "ipl = 1e6;"
-            "if g.Lvplsw ~= 0"
-            "    if v <= g.Zerox"
-            "        ipl = 0;"
-            "    elseif v < g.Brkpt"
-            "        ipl = g.Lvpl1 * (v - g.Zerox) / (g.Brkpt - g.Zerox);"
-            "    end"
-            "end"
-            "ip_l = min(max(ip, -ipl), ipl);"
-            "% LVACM: Ip scaled to 0 between Lvpnt1 and Lvpnt0"
-            "k = min(max((v - g.Lvpnt0) / (g.Lvpnt1 - g.Lvpnt0), 0), 1);"
-            "ip_out = k * ip_l;"];
-        addMatlabFunction(mdl + "/LVPL LVACM", "lvpl_lvacm", ["ip", "V_re", "V_im"], "ip_out", lv, "ap", [0 0 110 100]);
-        rowsG = {
-            [stg("@ip_cmd", 0), stg("Rrpwr"), stg("Tg ip"), stg("LVPL LVACM", 1, {2, "@V_re"; 3, "@V_im"}), stg(">ip")]
-            [stg("@iq_cmd", 0), stg("Iqrmax"), stg("Tg iq"), stg(">iq")]
-            rowGen};
+        % LVPL: ipl = 0 for |V| <= Zerox, Lvpl1 (|V| - Zerox) / (Brkpt - Zerox)
+        % up to Brkpt, no limit (1e6) above or with Lvplsw = 0;
+        % ip_l = sat(ip, +-ipl). LVACM: ip = k ip_l, k = sat((|V| - Lvpnt0) /
+        % (Lvpnt1 - Lvpnt0), 0, 1). |V| = V_term (unfiltered).
+        kc(mdl, "Zerox", "ap.gen.Zerox");  kc(mdl, "Brkpt - Zerox", "ap.gen.Brkpt - ap.gen.Zerox");
+        kc(mdl, "Brkpt", "ap.gen.Brkpt");  kc(mdl, "zero ipl", "0");  kc(mdl, "no limit", "1e6");
+        kc(mdl, "no limit 2", "1e6");  kc(mdl, "Lvplsw", "ap.gen.Lvplsw");
+        kc(mdl, "Lvpnt0", "ap.gen.Lvpnt0");  kc(mdl, "Lvpnt1 - Lvpnt0", "ap.gen.Lvpnt1 - ap.gen.Lvpnt0");
+        nb(mdl, "sum", "V - Zerox", "Inputs", "+-");
+        nb(mdl, "gain", "Lvpl1", "Gain", "ap.gen.Lvpl1");
+        nb(mdl, "div", "÷ (Brkpt - Zerox)");
+        nb(mdl, "minmax", "max 0", "Function", "max", "Inputs", "2");
+        nb(mdl, "rel", "V < Brkpt", "Operator", "<");
+        nb(mdl, "switch", "below Brkpt?", "Criteria", "u2 ~= 0");
+        nb(mdl, "switch", "LVPL on?", "Criteria", "u2 ~= 0");
+        nb(mdl, "gain", "-ipl", "Gain", "-1");
+        nb(mdl, "satdyn", "ip limit");
+        nb(mdl, "sum", "V - Lvpnt0", "Inputs", "+-");
+        nb(mdl, "div", "÷ (Lvpnt1 - Lvpnt0)");
+        nb(mdl, "sat", "k 0..1", "UpperLimit", "1", "LowerLimit", "0");
+        nb(mdl, "prod", "k ip");
+        rowsLV = {
+            [stg("@V_term", 0), stg("V - Zerox", 1, {2, "Zerox"}), stg("Lvpl1"), stg("÷ (Brkpt - Zerox)", 1, {2, "Brkpt - Zerox"}), ...
+             stg("max 0", 1, {2, "zero ipl"}), stg(">ipl_lin")]
+            [stg("@V_term", 0), stg("V < Brkpt", 1, {2, "Brkpt"}), stg(">below_brk")]
+            [stg("@ipl_lin", 0), stg("below Brkpt?", 1, {2, "@below_brk"; 3, "no limit"}), stg("LVPL on?", 1, {2, "Lvplsw"; 3, "no limit 2"}), stg(">ipl")]
+            [stg("@ipl", 0), stg("-ipl"), stg(">ipl_neg")]
+            [stg("@ip_raw", 0), stg("ip limit", 2, {1, "@ipl"; 3, "@ipl_neg"}), stg(">ip_l")]
+            [stg("@V_term", 0), stg("V - Lvpnt0", 1, {2, "Lvpnt0"}), stg("÷ (Lvpnt1 - Lvpnt0)", 1, {2, "Lvpnt1 - Lvpnt0"}), stg("k 0..1"), stg(">k_lvacm")]
+            [stg("@ip_l", 0), stg("k ip", 1, {2, "@k_lvacm"}), stg(">ip")]};
+        rowsG = [{
+            [stg("@ip_cmd", 0), stg("Rrpwr"), stg("Tg ip"), stg(">ip_raw")]
+            [stg("@iq_cmd", 0), stg("Iqrmax"), stg("Tg iq"), stg(">iq")]}; rowsLV; rowGen];
         gTitle = "Converter (WECC REGC_A)";
     end
     [y, h3, r3] = ctrlSection(mdl, gTitle, rowsG, x, y, cm, areaColor("asset"));
@@ -1729,6 +1758,19 @@ function nb(sys, kind, name, varargin)
         case "tf",      lib = "simulink/Continuous/Transfer Fcn";         sz = [70 34];
         case "int",     lib = "simulink/Continuous/Integrator";           sz = [30 30];
         case "dint",    lib = "simulink/Discrete/Discrete-Time Integrator"; sz = [30 30];
+        case "udelay",  lib = "simulink/Discrete/Unit Delay";             sz = [35 30];
+        case "delay",   lib = "simulink/Discrete/Delay";                  sz = [45 50];
+        case "trig",    lib = "simulink/Math Operations/Trigonometric Function"; sz = [45 30];
+        case "math",    lib = "simulink/Math Operations/Math Function";   sz = [45 34];
+        case "bias",    lib = "simulink/Math Operations/Bias";            sz = [45 30];
+        case "prod",    lib = "simulink/Math Operations/Product";         sz = [30 40];
+        case "abs",     lib = "simulink/Math Operations/Abs";             sz = [35 30];
+        case "ri2c",    lib = "simulink/Math Operations/Real-Imag to Complex"; sz = [40 40];
+        case "c2ri",    lib = "simulink/Math Operations/Complex to Real-Imag"; sz = [40 30];
+        case "ma2c",    lib = "simulink/Math Operations/Magnitude-Angle to Complex"; sz = [40 30];
+        case "c2ma",    lib = "simulink/Math Operations/Complex to Magnitude-Angle"; sz = [40 30];
+        case "lut",     lib = "simulink/Lookup Tables/1-D Lookup Table";  sz = [60 40];
+        case "dtc",     lib = "simulink/Signal Attributes/Data Type Conversion"; sz = [45 30];
     end
     add_block(lib, sys + "/" + name, "Position", [0 0 sz], varargin{:});
 end
@@ -1813,17 +1855,83 @@ end
 %    out 1 ip_cmd 2 iq_cmd 3 P_avail          (pu on the asset rating)
 %  ===================================================================
 function [h, r] = ctrlPll(mdl, x, y, cm)
-    % PLL section of an asset controller (stage 7): SRF-PLL on the terminal
-    % voltage phasor (V_re, V_im, common frame), parameters par.pll
-    % (pllParameters, p.pll.asset). Out: pll_c, pll_s (cos / sin of the
-    % angle the converter injects along) and f_pll [pu] (the asset's
-    % measured frequency, for asset-level frequency functions later).
-    % In the controller, so a converter DLL carries its own PLL, and the
-    % same controller serves the RMS and the dq network.
-    addMatlabFunction(mdl + "/PLL", "pll", ["V_re", "V_im"], ["c", "s", "f"], pllBody("ctrl", ""), "par", [0 0 120 90]);
+    % PLL of an asset controller (stage 7): Model block of models/ctrl/PLL.slx
+    % (SRF-PLL as a loop diagram, buildPllModel), argument pll = par.pll
+    % (pllParameters, p.pll.asset). Out: pll_c, pll_s (cos / sin of the angle
+    % the converter injects along) and f_pll [pu] (the asset's measured
+    % frequency). In the controller, so a converter DLL carries its own PLL,
+    % and the same controller serves the RMS and the dq network.
+    add_block("simulink/Ports & Subsystems/Model", mdl + "/PLL", "ModelName", "PLL", "Position", [0 0 120 90]);
+    Simulink.ModelReference.refresh(mdl + "/PLL");
+    setArg(mdl + "/PLL", "pll", "par.pll");
     rowsL = {[stg("@V_re", 0), stg("PLL", 1, {2, "@V_im"}, {2, "pll_s"; 3, "f_pll"}), stg(">pll_c")]};
     [~, h, r] = ctrlSection(mdl, "PLL (angle of the current injection, frequency)", rowsL, x, y, cm, areaColor("interface"));
 end
+
+function pllModelHeader(mdl, arg, src, desc)
+    % new referenced model at the simulation step, model argument arg with its
+    % default from HPP_parameters (p.<src>)
+    closeIfLoaded(mdl);
+    new_system(mdl);
+    set_param(mdl, "SolverType", "Fixed-step", "Solver", "FixedStepDiscrete", "FixedStep", "Ts", ...
+        "StopTime", "inf", "Description", desc);
+    ws = get_param(mdl, "ModelWorkspace");
+    ws.DataSource = "MATLAB Code";
+    ws.MATLABCode = char(strjoin([
+        "% Defaults for standalone use, from HPP_parameters. In HPP the Model"
+        "% block passes the instance's parameters as the argument """ + arg + """."
+        "pDefault = HPP_parameters();"
+        "Ts = pDefault.sim.Ts;      % [s] simulation step"
+        arg + " = pDefault." + src + ";"
+        "clear pDefault"], newline));
+    reload(ws);
+    set_param(mdl, "ParameterArgumentNames", arg);
+end
+
+function buildPllModel(folder)
+    % models/ctrl/PLL.slx: SRF-PLL as a loop diagram (pllSubsystem), argument
+    % pll (p.pll.asset or a meter's p.pll.<controller>). In V_re, V_im; out
+    % c, s (injection angle; pll.on = 0: along V), f [pu]. Created by
+    % buildHPP(All=true) if missing; maintained in Simulink afterwards.
+    mdl = "PLL";
+    pllModelHeader(mdl, "pll", "pll.asset", "SRF-PLL with moving-average prefilter (MAF-PLL), PI with +-5 Hz " + ...
+        "limits, angle wrapped to +-pi. Argument pll: see params/pllParameters.m.");
+    pllSubsystem(mdl, "pll", "ctrl");
+    save_system(mdl, fullfile(folder, mdl + ".slx"));
+    close_system(mdl);
+    registerInProject(fullfile(folder, mdl + ".slx"));
+end
+
+function buildFreqMeterModel(folder)
+    % models/ctrl/FreqMeter.slx: frequency meter of a controller: the PLL model
+    % (Model block, argument pll = m) and the one-cycle average of its
+    % frequency and RoCoF (pllAverage). Argument m (p.pll.<controller>).
+    % In V_re, V_im, f_sys (used with m.on = 0); out f [pu], RoCoF [Hz/s].
+    mdl = "FreqMeter";
+    pllModelHeader(mdl, "m", "pll.hppc", "Frequency meter: PLL, frequency averaged over Navg steps " + ...
+        "(m.on = 0: f_sys), RoCoF over Nroc steps. Argument m: see params/pllParameters.m.");
+    y = 100;
+    add_block("simulink/Sources/In1", mdl + "/V_re", "Port", "1");   portAt(mdl, "V_re", [20 y-20]);
+    add_block("simulink/Sources/In1", mdl + "/V_im", "Port", "2");   portAt(mdl, "V_im", [20 y+20]);
+    add_block("simulink/Sources/In1", mdl + "/f_sys", "Port", "3");  portAt(mdl, "f_sys", [20 y+110]);
+    add_block("simulink/Ports & Subsystems/Model", mdl + "/PLL", "ModelName", "PLL", "Position", [120 y-45 240 y+45]);
+    Simulink.ModelReference.refresh(mdl + "/PLL");
+    setArg(mdl + "/PLL", "pll", "m");
+    add_block("simulink/Sinks/Terminator", mdl + "/c unused", "Position", [290 y-40 310 y-20], "ShowName", "off");
+    add_block("simulink/Sinks/Terminator", mdl + "/s unused", "Position", [290 y-10 310 y+10], "ShowName", "off");
+    pllAverage(box(mdl, "f average, RoCoF", ["fp", "f_sys"], ["f", "RoCoF"], [360 y+10 490 y+90], ...
+        "f = moving average of the PLL frequency over Navg steps (on = 0: f_sys); RoCoF over Nroc steps"), "m");
+    add_block("simulink/Sinks/Out1", mdl + "/f", "Port", "1");      portAt(mdl, "f", [560 y+30]);
+    add_block("simulink/Sinks/Out1", mdl + "/RoCoF", "Port", "2");  portAt(mdl, "RoCoF", [560 y+70]);
+    L(mdl, "V_re/1", "PLL/1");  L(mdl, "V_im/1", "PLL/2");
+    L(mdl, "PLL/1", "c unused/1");  L(mdl, "PLL/2", "s unused/1");
+    L(mdl, "PLL/3", "f average, RoCoF/1", "fp");  L(mdl, "f_sys/1", "f average, RoCoF/2", "f_sys");
+    L(mdl, "f average, RoCoF/1", "f/1", "f");  L(mdl, "f average, RoCoF/2", "RoCoF/1", "RoCoF");
+    save_system(mdl, fullfile(folder, mdl + ".slx"));
+    close_system(mdl);
+    registerInProject(fullfile(folder, mdl + ".slx"));
+end
+
 
 function buildWTCtrlType4A(folder)
     mdl = "WT_ctrl";
@@ -2541,114 +2649,16 @@ function buildNetworkVariants(sys, p)
 end
 
 % ---------------------------------------------------------------------
-function body = pllBody(kind, src)
-    % SRF-PLL on a voltage phasor in the common frame (pllParameters), as
-    % MATLAB Function code. kind "ctrl" (asset controllers): parameter par
-    % (q = par.pll), in V_re, V_im, out c, s (cos / sin of the PLL angle;
-    % ideal with on = 0: the angle of V) and f [pu]. kind "meter": parameter m (q = m), in V_re, V_im,
-    % f_sys, out f [pu] (PLL frequency averaged over Navg; with on = 0 the
-    % system frequency) and RoCoF [Hz/s] over Nroc steps.
-    % Prefilter: moving average of the voltage in the PLL frame (d, q) over
-    % Npre steps (1 = off), i.e. a moving-average-filter PLL: the filter's
-    % delay (Npre/2 steps) is inside the loop and limits the bandwidth.
-    % The PLL is held when |V| < 0.05 pu (no angle information in a deep
-    % dip) and its frequency is limited to +-5 Hz. Buffers have fixed sizes
-    % (50, RoCoF 1000 steps, checked in deriveParameters).
-    if kind == "ctrl", q = "q = par.pll;"; else, q = "q = m;"; end
-    body = [
-        q
-        "persistent th xi bufV sumV kV"
-        "vin = complex(V_re, V_im);"
-        "if isempty(th)"
-        "    th = angle(vin);  xi = 0;"
-        "    v0 = complex(abs(vin), 0);"
-        "    bufV = repmat(v0, 50, 1);  sumV = v0 * q.Npre;  kV = 1;"
-        "end"
-        "% voltage in the PLL frame (d, q), then the prefilter: moving average"
-        "% over the last Npre steps in that frame (MAF-PLL), so its delay is"
-        "% inside the loop as in a real moving-average-filter PLL"
-        "vdq = vin * complex(cos(th), -sin(th));"
-        "kV = mod(kV, 50) + 1;"
-        "old = bufV(mod(kV - 1 - q.Npre, 50) + 1);"
-        "bufV(kV) = vdq;"
-        "sumV = sumV + vdq - old;"
-        "v = sumV / q.Npre;"
-        "% SRF-PLL: e = v_q / |v| = sin(angle error), PI -> frequency deviation dw [rad/s]"
-        "mv = abs(v);"
-        "e = 0;"
-        "if mv > 0.05"
-        "    e = imag(v) / mv;"
-        "end"
-        "wlim = 2 * pi * 5;"
-        "xi = min(max(xi + q.ki * q.Ts * e, -wlim), wlim);"
-        "dw = min(max(q.kp * e + xi, -wlim), wlim);"
-        "th = mod(th + q.Ts * dw + pi, 2 * pi) - pi;"
-        "fp = 1 + dw / (2 * pi * q.f0);"];
-    if kind == "ctrl"
-        body = [body
-            "f = fp;"
-            "if q.on > 0.5"
-            "    c = cos(th);  s = sin(th);"
-            "else   % ideal: aligned with the terminal voltage"
-            "    vm = max(abs(vin), 1e-3);"
-            "    c = V_re / vm;  s = V_im / vm;"
-            "end"];
-    else
-        body = [body
-            "persistent bufF sumF kF bufR kR"
-            "if isempty(bufF)"
-            "    bufF = repmat(fp, 50, 1);  sumF = fp * q.Navg;  kF = 1;"
-            "    bufR = repmat(f_sys, 1000, 1);  kR = 1;"
-            "end"
-            "% frequency for control: PLL frequency averaged over Navg steps"
-            "kF = mod(kF, 50) + 1;"
-            "oldF = bufF(mod(kF - 1 - q.Navg, 50) + 1);"
-            "bufF(kF) = fp;"
-            "sumF = sumF + fp - oldF;"
-            "if q.on > 0.5"
-            "    f = sumF / q.Navg;"
-            "else   % system frequency, as before stage 7"
-            "    f = f_sys;"
-            "end"
-            "% RoCoF over the window Nroc steps [Hz/s]"
-            "kR = mod(kR, 1000) + 1;"
-            "oldR = bufR(mod(kR - 1 - q.Nroc, 1000) + 1);"
-            "bufR(kR) = f;"
-            "RoCoF = (f - oldR) * q.f0 / (q.Nroc * q.Ts);"];
-    end
-end
 
-function setChartTs(blk, ts)
-    % explicit discrete sample time of a MATLAB Function block (needed for
-    % persistent states where the block would otherwise inherit a
-    % continuous rate)
-    ch = sfroot().find("-isa", "Stateflow.EMChart", "Path", char(blk));
-    ch.ChartUpdate = "DISCRETE";          % SampleTime only applies to discrete update
-    ch.SampleTime = char(ts);
-end
 
 function freqMeterBlock(blk, src, pos)
-    % Frequency meter of one controller (stage 7): masked subsystem with an
-    % SRF-PLL (prefilter, one-cycle average of f, RoCoF), parameter
-    % m = p.pll.<src> (pllParameters). In: 1 V_re, 2 V_im (voltage phasor
-    % at the measurement point), 3 f_sys (system frequency; used with
-    % m.on = 0). Out: 1 f [pu], 2 RoCoF [Hz/s].
-    newSubsystem(blk);
-    names = ["V_re", "V_im", "f_sys"];
-    for k = 1:3
-        add_block("simulink/Sources/In1", blk + "/" + names(k), "Port", num2str(k), "Position", [20 20 + 40*k 50 34 + 40*k]);
-    end
-    addMatlabFunction(blk + "/PLL", "pll_meter", names, ["f", "RoCoF"], pllBody("meter", ""), "m", [120 50 240 150]);
-    setChartTs(blk + "/PLL", "p.sim.Ts");
-    add_block("simulink/Sinks/Out1", blk + "/f", "Port", "1", "Position", [300 73 330 87]);
-    add_block("simulink/Sinks/Out1", blk + "/RoCoF", "Port", "2", "Position", [300 113 330 127]);
-    for k = 1:3, ln(blk, names(k) + "/1", "PLL/" + k, ""); end
-    ln(blk, "PLL/1", "f/1", "");  ln(blk, "PLL/2", "RoCoF/1", "");
-    mk = Simulink.Mask.create(blk);
-    mk.addParameter("Name", "m", "Prompt", "Meter PLL data", "Value", "p.pll." + src, "Evaluate", "on", "Tunable", "on");
-    mk.Description = "Frequency meter (SRF-PLL with prefilter, f averaged over one cycle, RoCoF), p.pll." + src + ...
-        ". m.on = 0: the system frequency. See params/pllParameters.m.";
-    mk.Display = "disp('f meter')";
+    % Frequency meter of one controller (stage 7): Model block of
+    % models/ctrl/FreqMeter.slx, argument m = p.pll.<src> (pllParameters).
+    % In: 1 V_re, 2 V_im (voltage phasor at the measurement point), 3 f_sys
+    % (system frequency; used with m.on = 0). Out: 1 f [pu], 2 RoCoF [Hz/s].
+    add_block("simulink/Ports & Subsystems/Model", blk, "ModelName", "FreqMeter", "Position", [0 0 110 80]);
+    Simulink.ModelReference.refresh(blk);
+    setArg(blk, "m", "p.pll." + src);
     set_param(blk, "BackgroundColor", areaColor("interface"));
     if nargin > 2, set_param(blk, "Position", pos); end
 end
@@ -2711,54 +2721,45 @@ end
 
 % ---------------------------------------------------------------------
 function buildGridFrequency(sys)
-    % Grid frequency f [pu] and grid source angle theta [rad] (stage 6):
-    % imposed (p.grid.fev step + p.grid.fprof profile) or a swing equation
-    % of an aggregated system behind the grid impedance (p.grid.sys.swing =
-    % 1), driven by a disturbance and the change of P_poc. theta rotates the
-    % grid source in the network (frame at f0). Masked: parameter g =
-    % p.grid (tunable). In: POC measurements (P_poc, one step old). Out:
-    % 1 f, 2 theta.
+    % Grid frequency f [pu] and grid source angle theta [rad] (stage 6), as a
+    % loop diagram: imposed (p.grid.fev step + p.grid.fprof profile) or a
+    % swing equation of an aggregated system behind the grid impedance
+    % (p.grid.sys.swing = 1), driven by a disturbance and the change of
+    % P_poc. theta rotates the grid source in the network (frame at f0).
+    % Masked atomic subsystem (sample time p.sim.Ts): parameter g = p.grid
+    % (tunable). In: POC measurements (P_poc, one step old). Out: 1 f, 2 theta.
+    % The profile holds its last value after its last point (before: 0).
     newSubsystem(sys);
-    add_block("simulink/Sources/In1", sys + "/POC meas", "Port", "1", "Position", [20 40 50 54]);
-    add_block("simulink/Signal Routing/Bus Selector", sys + "/POC sel", "Position", [100 30 105 70]);
+    y = 120;
+    add_block("simulink/Sources/In1", sys + "/POC meas", "Port", "1");  portAt(sys, "POC meas", [20 y]);
+    add_block("simulink/Signal Routing/Bus Selector", sys + "/POC sel", "Position", [80 y-15 85 y+15], "ShowName", "off");
     set_param(sys + "/POC sel", "OutputSignals", "P_poc");
-    add_block("simulink/Discrete/Memory", sys + "/P_poc prev", "InitialCondition", "0", "Position", [150 35 180 65]);
-    add_block("simulink/Sources/Digital Clock", sys + "/t", "SampleTime", "p.sim.Ts", "Position", [140 100 180 130]);
-    add_block("simulink/Sources/Constant", sys + "/Ts", "Value", "p.sim.Ts", "SampleTime", "p.sim.Ts", "Position", [140 160 180 190]);
-    body = [
-        "% state: frequency deviation w, governor xg, mechanical power Pm, angle"
-        "persistent w xg Pm Phold th"
-        "if isempty(w), w = 0; xg = 0; Pm = 0; Phold = P_poc; th = 0; end"
-        "s = g.sys;"
-        "if s.swing > 0.5"
-        "    if t < s.tOn"
-        "        Phold = P_poc;                       % balanced at tOn"
-        "    else"
-        "        dPh = (P_poc - Phold) / s.Ssys;       % HPP change, pu on Ssys"
-        "        dPd = s.dist.dP * (t >= s.dist.t0);"
-        "        dw  = (Pm + dPh - dPd - s.D * w) / (2 * s.H);"
-        "        dxg = (-w / s.R - xg) / s.Tg;"
-        "        dPm = (xg - Pm) / s.Tt;"
-        "        w = w + Ts * dw;  xg = xg + Ts * dxg;  Pm = Pm + Ts * dPm;"
-        "    end"
-        "    f = 1 + w;"
-        "else"
-        "    f = 1 + g.fev.df * (t >= g.fev.t0) + interp1(g.fprof.t, g.fprof.df, t, 'linear', 0);"
-        "end"
-        "th = th + 2 * pi * g.f0 * (f - 1) * Ts;"
-        "th = mod(th + pi, 2 * pi) - pi;"
-        "% phase jump of the grid source (p.grid.pjump), e.g. a line trip"
-        "theta = mod(th + g.pjump.dphi * (t >= g.pjump.t0) + pi, 2 * pi) - pi;"];
-    addMatlabFunction(sys + "/frequency", "grid_frequency", ["P_poc", "t", "Ts"], ["f", "theta"], body, "g", [240 40 400 190]);
-    add_block("simulink/Sinks/Out1", sys + "/f", "Port", "1", "Position", [470 60 500 74]);
-    add_block("simulink/Sinks/Out1", sys + "/theta", "Port", "2", "Position", [470 150 500 164]);
-    ln(sys, "POC meas/1", "POC sel/1", "");
-    ln(sys, "POC sel/1", "P_poc prev/1", "P_poc");
-    ln(sys, "P_poc prev/1", "frequency/1", "");
-    ln(sys, "t/1", "frequency/2", "");
-    ln(sys, "Ts/1", "frequency/3", "");
-    ln(sys, "frequency/1", "f/1", "f");
-    ln(sys, "frequency/2", "theta/1", "theta");
+    pb(sys, "udelay", "P_poc[k-1]", [120 y], "InitialCondition", "0");
+    add_block("simulink/Sources/Digital Clock", sys + "/t", "SampleTime", "p.sim.Ts", "Position", [20 y+200 60 y+230]);
+    gfActivation(box(sys, "active", "t", "active", [200 y+170 300 y+200], "swing equation on (swing = 1) and t >= tOn"));
+    gfChange(box(sys, "HPP change", ["P_poc", "active"], "dPh", [220 y-25 340 y+25], ...
+        "dPh = (P_poc - P_hold) / Ssys; P_hold follows P_poc until tOn (system balanced at tOn)"));
+    gfDisturbance(box(sys, "disturbance", "t", "dPd", [220 y+60 340 y+90], "dP_dist = dist.dP for t >= dist.t0"));
+    gfSwing(box(sys, "swing equation", ["dPh", "dPd", "active"], "w", [420 y-20 560 y+90], ...
+        "2H dw/dt = Pm + dPh - dP_dist - D w; governor and turbine (Pm); forward Euler from tOn"));
+    pb(sys, "bias", "1 + w", [610 y], "Bias", "1");
+    gfImposed(box(sys, "imposed", "t", "f_imp", [420 y+150 560 y+190], "1 + fev.df (t >= fev.t0) + profile(t)"));
+    pk(sys, "swing", "g.sys.swing", [610 y+80]);
+    pb(sys, "switch", "swing?", [700 y+20], "Criteria", "u2 > Threshold", "Threshold", "0.5");
+    gfAngle(box(sys, "grid source angle", ["f", "t"], "theta", [800 y+80 940 y+140], ...
+        "th = wrap(th[k-1] + 2 pi f0 (f - 1) Ts); theta = wrap(th + dphi (t >= pjump.t0))"));
+    add_block("simulink/Sinks/Out1", sys + "/f", "Port", "1");      portAt(sys, "f", [1000 y+20]);
+    add_block("simulink/Sinks/Out1", sys + "/theta", "Port", "2");  portAt(sys, "theta", [1000 y+110]);
+    L(sys, "POC meas/1", "POC sel/1");  L(sys, "POC sel/1", "P_poc[k-1]/1");
+    L(sys, "P_poc[k-1]/1", "HPP change/1", "P_poc");
+    L(sys, "t/1", "active/1", "t");  L(sys, "active/1", "HPP change/2", "active");  L(sys, "active/1", "swing equation/3");
+    L(sys, "t/1", "disturbance/1");  L(sys, "t/1", "imposed/1");  L(sys, "t/1", "grid source angle/2");
+    L(sys, "HPP change/1", "swing equation/1", "dPh");  L(sys, "disturbance/1", "swing equation/2", "dPd");
+    L(sys, "swing equation/1", "1 + w/1", "w");
+    L(sys, "1 + w/1", "swing?/1");  L(sys, "swing/1", "swing?/2");  L(sys, "imposed/1", "swing?/3", "f_imp");
+    L(sys, "swing?/1", "f/1", "f");  L(sys, "swing?/1", "grid source angle/1");
+    L(sys, "grid source angle/1", "theta/1", "theta");
+    set_param(sys, "TreatAsAtomicUnit", "on", "SystemSampleTime", "p.sim.Ts");
     mk = Simulink.Mask.create(sys);
     mk.addParameter("Name", "g", "Prompt", "Grid data", "Value", "p.grid", "Evaluate", "on", "Tunable", "on");
     mk.Description = "Grid frequency [pu] and angle [rad]: imposed (p.grid.fev, p.grid.fprof) or " + ...
@@ -2766,6 +2767,146 @@ function buildGridFrequency(sys)
     mk.Display = "disp('grid frequency')";
     set_param(sys, "BackgroundColor", areaColor("interface"));
 end
+
+function gfActivation(s)
+    portAt(s, "t", [20 50]);  portAt(s, "active", [400 70]);
+    pk(s, "tOn", "g.sys.tOn", [60 100]);  pk(s, "swing", "g.sys.swing", [60 160]);  pk(s, "0.5", "0.5", [130 190]);
+    pb(s, "rel", "t >= tOn", [140 60], "Operator", ">=");
+    pb(s, "rel", "swing > 0.5", [200 170], "Operator", ">");
+    pb(s, "or", "and", [300 70], "Operator", "AND");
+    L(s, "t/1", "t >= tOn/1");  L(s, "tOn/1", "t >= tOn/2");
+    L(s, "swing/1", "swing > 0.5/1");  L(s, "0.5/1", "swing > 0.5/2");
+    L(s, "t >= tOn/1", "and/1");  L(s, "swing > 0.5/1", "and/2");  L(s, "and/1", "active/1");
+end
+
+function gfChange(s)
+    % P_hold = P_hold[k-1] while active, else P_poc (start P_poc); dPh = (P_poc - P_hold) / Ssys
+    portAt(s, "P_poc", [20 60]);  portAt(s, "active", [20 160]);  portAt(s, "dPh", [480 60]);
+    pb(s, "switch", "hold?", [180 130], "Criteria", "u2 ~= 0");
+    pb(s, "delay", "P_hold[k-1]", [180 230], "DelayLength", "1", "InitialConditionSource", "Input port");  flip(s, "P_hold[k-1]");
+    pb(s, "sum", "P_poc - P_hold", [290 60], "Inputs", "+-");
+    pk(s, "Ssys", "g.sys.Ssys", [300 120]);
+    pb(s, "div", "÷ Ssys", [380 70]);
+    L(s, "P_hold[k-1]/1", "hold?/1");  L(s, "active/1", "hold?/2");  L(s, "P_poc/1", "hold?/3");
+    L(s, "hold?/1", "P_hold[k-1]/1", "P_hold");  L(s, "P_poc/1", "P_hold[k-1]/2");
+    L(s, "P_poc/1", "P_poc - P_hold/1");  L(s, "hold?/1", "P_poc - P_hold/2");
+    L(s, "P_poc - P_hold/1", "÷ Ssys/1");  L(s, "Ssys/1", "÷ Ssys/2");  L(s, "÷ Ssys/1", "dPh/1");
+end
+
+function gfDisturbance(s)
+    portAt(s, "t", [20 50]);  portAt(s, "dPd", [340 50]);
+    pk(s, "dist t0", "g.sys.dist.t0", [40 100]);
+    pb(s, "rel", "t >= t0", [110 60], "Operator", ">=");
+    pb(s, "dtc", "on", [170 50], "OutDataTypeStr", "double");
+    pb(s, "gain", "dP", [250 50], "Gain", "g.sys.dist.dP");
+    L(s, "t/1", "t >= t0/1");  L(s, "dist t0/1", "t >= t0/2");  L(s, "t >= t0/1", "on/1");  L(s, "on/1", "dP/1");  L(s, "dP/1", "dPd/1");
+end
+
+function gfSwing(s)
+    % dw = (Pm + dPh - dPd - D w) / (2 H); dxg = (-w / R - xg) / Tg;
+    % dPm = (xg - Pm) / Tt; states by forward Euler while active (previous
+    % values on the right-hand sides, as the former code).
+    % Layout: w row on top (left to right), D feedback below it, governor
+    % row right to left, turbine row left to right back to the sum.
+    yw = 80;  yd = 190;  yg = 300;  yt = 420;  ya = 520;
+    portAt(s, "dPh", [20 yw-15]);  portAt(s, "dPd", [20 yw+5]);  portAt(s, "active", [20 ya]);  portAt(s, "w", [800 yw]);
+    pb(s, "sum", "Pm + dPh - dPd - D w", [140 yw], "Inputs", "++--");
+    pb(s, "div", "÷ 2H", [230 yw+10]);  pk(s, "2 H", "2 * g.sys.H", [200 yw+70]);
+    gfState(box(s, "w state", ["dx", "active"], ["x", "x_prev"], [330 yw-15 440 yw+45], "w = w[k-1] + Ts dw while active"));
+    pb(s, "gain", "D", [320 yd], "Gain", "g.sys.D");  flip(s, "D");
+    % governor (right to left): dxg = (-w/R - xg) / Tg
+    pb(s, "gain", "-1", [640 yg], "Gain", "-1");  flip(s, "-1");
+    pb(s, "div", "÷ R", [560 yg+10]);  flip(s, "÷ R");  pk(s, "R", "g.sys.R", [600 yg+60]);
+    pb(s, "sum", "- xg", [480 yg+10], "Inputs", "+-");  flip(s, "- xg");
+    pb(s, "div", "÷ Tg", [400 yg+10]);  flip(s, "÷ Tg");  pk(s, "Tg", "g.sys.Tg", [440 yg+60]);
+    gfState(box(s, "xg state", ["dx", "active"], ["x", "x_prev"], [230 yg-15 340 yg+45], "governor state, forward Euler"));
+    flip(s, "xg state");
+    % turbine (left to right): dPm = (xg - Pm) / Tt
+    pb(s, "sum", "xg - Pm", [120 yt], "Inputs", "+-");
+    pb(s, "div", "÷ Tt", [200 yt+10]);  pk(s, "Tt", "g.sys.Tt", [150 yt+60]);
+    gfState(box(s, "Pm state", ["dx", "active"], ["x", "x_prev"], [290 yt-15 400 yt+45], "turbine output, forward Euler"));
+    L(s, "Pm state/2", "Pm + dPh - dPd - D w/1", "Pm[k-1]");
+    L(s, "dPh/1", "Pm + dPh - dPd - D w/2");  L(s, "dPd/1", "Pm + dPh - dPd - D w/3");
+    L(s, "D/1", "Pm + dPh - dPd - D w/4");
+    L(s, "Pm + dPh - dPd - D w/1", "÷ 2H/1");  L(s, "2 H/1", "÷ 2H/2");
+    L(s, "÷ 2H/1", "w state/1", "dw");
+    L(s, "w state/1", "w/1", "w");  L(s, "w state/2", "D/1", "w[k-1]");
+    L(s, "w state/2", "-1/1");  L(s, "-1/1", "÷ R/1");  L(s, "R/1", "÷ R/2");
+    L(s, "÷ R/1", "- xg/1");  L(s, "xg state/2", "- xg/2", "xg[k-1]");
+    L(s, "- xg/1", "÷ Tg/1");  L(s, "Tg/1", "÷ Tg/2");  L(s, "÷ Tg/1", "xg state/1", "dxg");
+    L(s, "xg state/2", "xg - Pm/1");  L(s, "Pm state/2", "xg - Pm/2");
+    L(s, "xg - Pm/1", "÷ Tt/1");  L(s, "Tt/1", "÷ Tt/2");  L(s, "÷ Tt/1", "Pm state/1", "dPm");
+    % active (enable of the three states) via Goto / From: not part of a loop
+    grey = "[0.855 0.855 0.855]";
+    ga = addGoto(s, "active", grey);  set_param(s + "/" + ga, "Position", [70 ya-11 130 ya+11]);
+    L(s, "active/1", ga + "/1");
+    for st = ["w state", "xg state", "Pm state"]
+        fa = addFrom(s, "active", grey);
+        ph = get_param(s + "/" + st, "PortHandles");  pp = get_param(ph.Inport(2), "Position");
+        if get_param(s + "/" + st, "Orientation") == "left"
+            set_param(s + "/" + fa, "Position", [pp(1) + 30, pp(2) - 11, pp(1) + 90, pp(2) + 11], "Orientation", "left");
+        else
+            set_param(s + "/" + fa, "Position", [pp(1) - 90, pp(2) - 11, pp(1) - 30, pp(2) + 11]);
+        end
+        L(s, fa + "/1", st + "/2");
+    end
+end
+
+function gfState(s)
+    % x = x[k-1] + Ts dx while active, else x[k-1] (start 0)
+    portAt(s, "dx", [20 50]);  portAt(s, "active", [20 120]);  portAt(s, "x", [420 60]);  portAt(s, "x_prev", [420 200]);
+    pb(s, "gain", "Ts", [80 50], "Gain", "p.sim.Ts");
+    pb(s, "sum", "x[k-1] + Ts dx", [170 60], "Inputs", "++");
+    pb(s, "switch", "active?", [270 80], "Criteria", "u2 ~= 0");
+    pb(s, "udelay", "x[k-1]", [230 190], "InitialCondition", "0");  flip(s, "x[k-1]");
+    L(s, "dx/1", "Ts/1");  L(s, "x[k-1]/1", "x[k-1] + Ts dx/1");  L(s, "Ts/1", "x[k-1] + Ts dx/2");
+    L(s, "x[k-1] + Ts dx/1", "active?/1");  L(s, "active/1", "active?/2");  L(s, "x[k-1]/1", "active?/3");
+    L(s, "active?/1", "x/1", "x");  L(s, "active?/1", "x[k-1]/1");  L(s, "x[k-1]/1", "x_prev/1", "x[k-1]");
+end
+
+function gfImposed(s)
+    portAt(s, "t", [20 50]);  portAt(s, "f_imp", [480 60]);
+    pk(s, "fev t0", "g.fev.t0", [40 100]);
+    pb(s, "rel", "t >= t0", [110 60], "Operator", ">=");
+    pb(s, "dtc", "on", [170 50], "OutDataTypeStr", "double");
+    pb(s, "gain", "df", [230 50], "Gain", "g.fev.df");
+    pb(s, "bias", "1 +", [300 50], "Bias", "1");
+    pb(s, "lut", "profile", [250 130], "BreakpointsForDimension1", "g.fprof.t", "Table", "g.fprof.df", "ExtrapMethod", "Clip");
+    pb(s, "sum", "+ profile", [390 60], "Inputs", "++");
+    L(s, "t/1", "t >= t0/1");  L(s, "fev t0/1", "t >= t0/2");  L(s, "t >= t0/1", "on/1");  L(s, "on/1", "df/1");
+    L(s, "df/1", "1 +/1");  L(s, "1 +/1", "+ profile/1");  L(s, "t/1", "profile/1");  L(s, "profile/1", "+ profile/2");
+    L(s, "+ profile/1", "f_imp/1");
+end
+
+function gfAngle(s)
+    % th = wrap(th[k-1] + 2 pi f0 (f - 1) Ts); theta = wrap(th + dphi (t >= t0))
+    portAt(s, "f", [20 50]);  portAt(s, "t", [20 200]);  portAt(s, "theta", [900 210]);
+    pb(s, "bias", "f - 1", [70 50], "Bias", "-1");
+    pb(s, "gain", "2 pi f0", [140 50], "Gain", sprintf("%.17g * g.f0", 2*pi));
+    pb(s, "gain", "Ts", [220 50], "Gain", "p.sim.Ts");
+    pb(s, "sum", "th[k-1] +", [300 60], "Inputs", "++");
+    pb(s, "bias", "+ pi", [360 60], "Bias", "pi");  pk(s, "2 pi", "2*pi", [380 120]);
+    pb(s, "math", "mod 2 pi", [440 70], "Operator", "mod");
+    pb(s, "bias", "- pi", [520 60], "Bias", "-pi");
+    pb(s, "udelay", "th[k-1]", [360 150], "InitialCondition", "0");  flip(s, "th[k-1]");
+    pk(s, "jump t0", "g.pjump.t0", [40 250]);
+    pb(s, "rel", "t >= t0", [110 210], "Operator", ">=");
+    pb(s, "dtc", "on", [170 200], "OutDataTypeStr", "double");
+    pb(s, "gain", "dphi", [240 200], "Gain", "g.pjump.dphi");
+    pb(s, "sum", "th + jump", [620 210], "Inputs", "++");
+    pb(s, "bias", "+ pi 2", [680 210], "Bias", "pi");  pk(s, "2 pi 2", "2*pi", [700 270]);
+    pb(s, "math", "mod 2 pi 2", [760 220], "Operator", "mod");
+    pb(s, "bias", "- pi 2", [830 210], "Bias", "-pi");
+    L(s, "f/1", "f - 1/1");  L(s, "f - 1/1", "2 pi f0/1");  L(s, "2 pi f0/1", "Ts/1");
+    L(s, "th[k-1]/1", "th[k-1] +/1");  L(s, "Ts/1", "th[k-1] +/2");
+    L(s, "th[k-1] +/1", "+ pi/1");  L(s, "+ pi/1", "mod 2 pi/1");  L(s, "2 pi/1", "mod 2 pi/2");
+    L(s, "mod 2 pi/1", "- pi/1");  L(s, "- pi/1", "th[k-1]/1", "th");
+    L(s, "t/1", "t >= t0/1");  L(s, "jump t0/1", "t >= t0/2");  L(s, "t >= t0/1", "on/1");  L(s, "on/1", "dphi/1");
+    L(s, "- pi/1", "th + jump/1");  L(s, "dphi/1", "th + jump/2");
+    L(s, "th + jump/1", "+ pi 2/1");  L(s, "+ pi 2/1", "mod 2 pi 2/1");  L(s, "2 pi 2/1", "mod 2 pi 2/2");
+    L(s, "mod 2 pi 2/1", "- pi 2/1");  L(s, "- pi 2/1", "theta/1");
+end
+
 
 function buildNetworkSimscape(sys, p)
     newSubsystem(sys);
@@ -3219,4 +3360,238 @@ function addPhasor(b, pos, Vn)
     add_block("simulink/Sources/Constant", b + "/Vn", "Value", Vn, "Position", [pos(1)-90 pos(4)+10 pos(1)-30 pos(4)+30]);
     add_block("simulink/Sources/Constant", b + "/w0", "Value", "2*pi*p.grid.f0", "Position", [pos(1)-90 pos(4)+40 pos(1)-30 pos(4)+60]);
     add_line(b, "Vn/1", "phasor/3");  add_line(b, "w0/1", "phasor/4");
+end
+
+%% ===================================================================
+%  Loop diagrams (PLL, grid frequency): small helpers for hand-placed
+%  blocks, so feedback is drawn as a loop (flipped delay blocks)
+%  ===================================================================
+function b = pb(sys, kind, name, xy, varargin)
+    % standard block (nb) placed with its left edge at x, centred on y
+    nb(sys, kind, name, varargin{:});
+    b = sys + "/" + name;
+    p = get_param(b, "Position");  w = p(3) - p(1);  h = p(4) - p(2);
+    set_param(b, "Position", [xy(1), xy(2) - h/2, xy(1) + w, xy(2) + h/2]);
+end
+
+function pk(sys, name, value, xy)
+    % parameter constant placed like pb
+    kc(sys, name, value);
+    p = get_param(sys + "/" + name, "Position");  w = p(3) - p(1);
+    set_param(sys + "/" + name, "Position", [xy(1), xy(2) - 12, xy(1) + w, xy(2) + 12]);
+end
+
+function flip(sys, name)
+    set_param(sys + "/" + name, "Orientation", "left");
+end
+
+function L(sys, a, b, name)
+    % line from port a to port b (smart routing), optionally named
+    h = add_line(sys, a, b, "autorouting", "smart");
+    if nargin > 3 && name ~= "", set_param(h, "Name", name); end
+end
+
+function s = box(parent, name, ins, outs, rect, desc)
+    % empty subsystem with named in- and outports, at rect; ports are placed
+    % by the caller (portsAt)
+    s = parent + "/" + name;
+    newSubsystem(s);
+    for k = 1:numel(ins)
+        add_block("simulink/Sources/In1", s + "/" + ins(k), "Port", num2str(k), "Position", [0 0 30 14]);
+    end
+    for k = 1:numel(outs)
+        add_block("simulink/Sinks/Out1", s + "/" + outs(k), "Port", num2str(k), "Position", [0 0 30 14]);
+    end
+    set_param(s, "Position", rect);
+    if nargin > 5, set_param(s, "Description", desc); end
+end
+
+function portAt(sys, name, xy)
+    set_param(sys + "/" + name, "Position", [xy(1), xy(2) - 7, xy(1) + 30, xy(2) + 7]);
+end
+
+%% ---------------------------------------------------------------- PLL
+function pllSubsystem(blk, P, kind)
+    % SRF-PLL as a loop diagram at the root of blk (the PLL model). P: the
+    % parameter struct ("pll"). The arithmetic and its order are those of
+    % the former MATLAB Function:
+    %   vdq = V e^(-j th[k-1])                         rotate
+    %   v   = moving average of vdq over Npre steps    MAF (prefilter, in the loop)
+    %   e   = Im(v) / |v|, 0 below 0.05 pu             phase detector
+    %   dw  = sat(kp e + sat(xi[k-1] + ki Ts e))       PI, +-5 Hz
+    %   th  = wrap(th[k-1] + Ts dw)                    angle; th[k-1] starts at angle(V)
+    %   f   = 1 + dw / w0
+    % In V_re, V_im; out c, s (injection angle; on = 0: along V), f.
+    % Layout: main path on y0 left to right, the angle feedback on y1 right to
+    % left, start values below, the frequency branch on yf.
+    y0 = 100;  y1 = 220;  yf = 300;  ys = 380;
+    add_block("simulink/Sources/In1", blk + "/V_re", "Port", "1");  portAt(blk, "V_re", [20 y0-15]);
+    add_block("simulink/Sources/In1", blk + "/V_im", "Port", "2");  portAt(blk, "V_im", [20 y0+15]);
+    pb(blk, "ri2c", "V", [90 y0], "Input", "Real and imag");
+    pb(blk, "prod", "rotate", [190 y0+10]);
+    pllMaf(box(blk, "MAF", ["vdq", "v0"], "v", [270 y0-15 380 y0+45], ...
+        "Prefilter: moving average of the voltage in the PLL frame over Npre steps (MAF-PLL)"), P);
+    pllDetector(box(blk, "phase detector", "v", "e", [430 y0-15 540 y0+15], ...
+        "e = Im(v) / |v| = sin(angle error); 0 below 0.05 pu (held in a deep dip)"));
+    pllPi(box(blk, "PI", "e", "dw", [590 y0-15 700 y0+15], "dw = sat(kp e + xi), xi = sat(xi[k-1] + ki Ts e), +-5 Hz"), P);
+    pllAngle(box(blk, "angle", ["dw", "th_prev"], "th", [770 y0-15 880 y0+45], "th = wrap(th[k-1] + Ts dw) to +-pi"), P);
+    % feedback: th -> z^-1 (start: angle of V) -> e^(-j th) -> rotate
+    pb(blk, "delay", "z^-1", [840 y1], "DelayLength", "1", "InitialConditionSource", "Input port");  flip(blk, "z^-1");
+    pllExpj(box(blk, "e^(-j th)", "th", "e", [380 y1-15 480 y1+15], "unit phasor of the angle, conjugated"));
+    flip(blk, "e^(-j th)");
+    % start values: angle of V for z^-1, |V| for the prefilter
+    pb(blk, "c2ma", "angle(V)", [500 ys], "Output", "Angle");
+    pllStart(box(blk, "start |V|", "vin", "v0", [190 y0+60 260 y0+85], "start value of the prefilter: |V| (real)"));
+    % frequency branch
+    pk(blk, "w0", P + ".w0", [900 yf+20]);
+    pb(blk, "div", "dw ÷ w0", [980 yf]);
+    pb(blk, "bias", "1 +", [1050 yf], "Bias", "1");
+    % injection angle
+    pllInjection(box(blk, "injection angle", ["th", "V"], ["c", "s"], [960 y0-15 1080 y0+45], ...
+        "c, s = cos / sin of the PLL angle; on = 0 (ideal): along V, V / max(|V|, 1e-3)"), P);
+    add_block("simulink/Sinks/Out1", blk + "/c", "Port", "1");  portAt(blk, "c", [1140 y0]);
+    add_block("simulink/Sinks/Out1", blk + "/s", "Port", "2");  portAt(blk, "s", [1140 y0+30]);
+    add_block("simulink/Sinks/Out1", blk + "/f", "Port", "3");  portAt(blk, "f", [1140 yf]);
+    L(blk, "V_re/1", "V/1");  L(blk, "V_im/1", "V/2");
+    L(blk, "V/1", "rotate/1", "V");
+    L(blk, "rotate/1", "MAF/1", "vdq");
+    L(blk, "V/1", "start |V|/1");  L(blk, "start |V|/1", "MAF/2", "v0");
+    L(blk, "MAF/1", "phase detector/1", "v");
+    L(blk, "phase detector/1", "PI/1", "e");
+    L(blk, "PI/1", "angle/1", "dw");
+    L(blk, "angle/1", "z^-1/1", "th");
+    L(blk, "z^-1/1", "angle/2", "th[k-1]");
+    L(blk, "z^-1/1", "e^(-j th)/1");
+    L(blk, "e^(-j th)/1", "rotate/2");
+    L(blk, "V/1", "angle(V)/1");  L(blk, "angle(V)/1", "z^-1/2", "angle(V)");
+    L(blk, "PI/1", "dw ÷ w0/1");  L(blk, "w0/1", "dw ÷ w0/2");  L(blk, "dw ÷ w0/1", "1 +/1");
+    L(blk, "angle/1", "injection angle/1");  L(blk, "V/1", "injection angle/2");
+    L(blk, "injection angle/1", "c/1", "c");  L(blk, "injection angle/2", "s/1", "s");
+    L(blk, "1 +/1", "f/1", "f");
+end
+
+function pllMaf(s, P)
+    % S = S[k-1] + vdq - vdq[k-Npre]; v = S / Npre; start values |V|
+    portAt(s, "vdq", [20 60]);  portAt(s, "v0", [20 200]);  portAt(s, "v", [520 60]);
+    pk(s, "Npre", P + ".Npre", [100 120]);  pk(s, "Npre 2", P + ".Npre", [380 90]);
+    pb(s, "delay", "vdq[k-Npre]", [180 110], "DelayLengthSource", "Input port", "DelayLengthUpperLimit", "50", ...
+        "InitialConditionSource", "Input port");
+    pb(s, "sum", "S", [290 60], "Inputs", "++-");
+    pb(s, "delay", "S[k-1]", [290 170], "DelayLength", "1", "InitialConditionSource", "Input port");  flip(s, "S[k-1]");
+    pb(s, "gain", "Npre |V|", [180 220], "Gain", P + ".Npre");
+    pb(s, "div", "S ÷ Npre", [430 60]);
+    L(s, "vdq/1", "S/2");  L(s, "vdq/1", "vdq[k-Npre]/1");  L(s, "Npre/1", "vdq[k-Npre]/2");  L(s, "v0/1", "vdq[k-Npre]/3");
+    L(s, "vdq[k-Npre]/1", "S/3");
+    L(s, "S/1", "S ÷ Npre/1", "S");  L(s, "Npre 2/1", "S ÷ Npre/2");  L(s, "S ÷ Npre/1", "v/1");
+    L(s, "S/1", "S[k-1]/1");  L(s, "S[k-1]/1", "S/1");
+    L(s, "v0/1", "Npre |V|/1");  L(s, "Npre |V|/1", "S[k-1]/2");
+end
+
+function pllDetector(s)
+    portAt(s, "v", [20 80]);  portAt(s, "e", [460 80]);
+    pb(s, "c2ri", "Im", [110 80], "Output", "Imag");
+    pb(s, "abs", "|v|", [110 150]);
+    pb(s, "div", "Im ÷ |v|", [210 80]);
+    pk(s, "0", "0", [270 190]);
+    pb(s, "switch", "|v| > 0.05?", [330 100], "Criteria", "u2 > Threshold", "Threshold", "0.05");
+    L(s, "v/1", "Im/1");  L(s, "v/1", "|v|/1");
+    L(s, "Im/1", "Im ÷ |v|/1");  L(s, "|v|/1", "Im ÷ |v|/2");
+    L(s, "Im ÷ |v|/1", "|v| > 0.05?/1");  L(s, "|v|/1", "|v| > 0.05?/2");  L(s, "0/1", "|v| > 0.05?/3");
+    L(s, "|v| > 0.05?/1", "e/1");
+end
+
+function pllPi(s, P)
+    % dw = sat(kp e + xi), xi = sat(xi[k-1] + ki Ts e)
+    portAt(s, "e", [20 60]);  portAt(s, "dw", [520 60]);
+    pb(s, "gain", "kp", [110 60], "Gain", P + ".kp");
+    pb(s, "gain", "ki Ts", [110 150], "Gain", P + ".ki * " + P + ".Ts");
+    pb(s, "sum", "xi[k-1] +", [220 160], "Inputs", "++");
+    pb(s, "sat", "xi limit", [290 160], "UpperLimit", P + ".wlim", "LowerLimit", "-" + P + ".wlim");
+    pb(s, "udelay", "xi[k-1]", [250 240], "InitialCondition", "0");  flip(s, "xi[k-1]");
+    pb(s, "sum", "kp e + xi", [380 70], "Inputs", "++");
+    pb(s, "sat", "dw limit", [440 60], "UpperLimit", P + ".wlim", "LowerLimit", "-" + P + ".wlim");
+    L(s, "e/1", "kp/1");  L(s, "e/1", "ki Ts/1");
+    L(s, "ki Ts/1", "xi[k-1] +/2");  L(s, "xi[k-1] +/1", "xi limit/1");
+    L(s, "xi limit/1", "xi[k-1]/1", "xi");  L(s, "xi[k-1]/1", "xi[k-1] +/1");
+    L(s, "kp/1", "kp e + xi/1");  L(s, "xi limit/1", "kp e + xi/2");
+    L(s, "kp e + xi/1", "dw limit/1");  L(s, "dw limit/1", "dw/1");
+end
+
+function pllAngle(s, P)
+    % th = mod(th[k-1] + Ts dw + pi, 2 pi) - pi
+    portAt(s, "dw", [20 60]);  portAt(s, "th_prev", [20 130]);  portAt(s, "th", [520 70]);
+    pb(s, "gain", "Ts", [90 60], "Gain", P + ".Ts");
+    pb(s, "sum", "th[k-1] + Ts dw", [190 70], "Inputs", "++");
+    pb(s, "bias", "+ pi", [250 70], "Bias", "pi");
+    pk(s, "2 pi", "2*pi", [270 140]);
+    pb(s, "math", "mod 2 pi", [330 80], "Operator", "mod");
+    pb(s, "bias", "- pi", [420 70], "Bias", "-pi");
+    L(s, "dw/1", "Ts/1");  L(s, "th_prev/1", "th[k-1] + Ts dw/1");  L(s, "Ts/1", "th[k-1] + Ts dw/2");
+    L(s, "th[k-1] + Ts dw/1", "+ pi/1");  L(s, "+ pi/1", "mod 2 pi/1");  L(s, "2 pi/1", "mod 2 pi/2");
+    L(s, "mod 2 pi/1", "- pi/1");  L(s, "- pi/1", "th/1");
+end
+
+function pllExpj(s)
+    portAt(s, "th", [20 50]);  portAt(s, "e", [300 50]);
+    pb(s, "ma2c", "e^(j th)", [90 50], "Input", "Angle", "ConstantPart", "1");
+    pb(s, "math", "conj", [180 50], "Operator", "conj");
+    L(s, "th/1", "e^(j th)/1");  L(s, "e^(j th)/1", "conj/1");  L(s, "conj/1", "e/1");
+end
+
+function pllStart(s)
+    portAt(s, "vin", [20 50]);  portAt(s, "v0", [300 50]);
+    pb(s, "abs", "|V|", [90 50]);  pk(s, "0", "0", [100 100]);
+    pb(s, "ri2c", "|V| + j0", [180 60], "Input", "Real and imag");
+    L(s, "vin/1", "|V|/1");  L(s, "|V|/1", "|V| + j0/1");  L(s, "0/1", "|V| + j0/2");  L(s, "|V| + j0/1", "v0/1");
+end
+
+function pllInjection(s, P)
+    % c, s = cos / sin(th); on = 0: c, s = V_re, V_im / max(|V|, 1e-3)
+    portAt(s, "th", [20 50]);  portAt(s, "V", [20 160]);
+    portAt(s, "c", [520 70]);  portAt(s, "s", [520 140]);
+    pb(s, "trig", "cos", [120 40], "Operator", "cos");  pb(s, "trig", "sin", [120 110], "Operator", "sin");
+    pb(s, "c2ri", "re, im", [90 200], "Output", "Real and imag");
+    pb(s, "abs", "|V|", [90 160]);  pk(s, "1e-3", "1e-3", [90 260]);
+    pb(s, "minmax", "max", [170 170], "Function", "max", "Inputs", "2");
+    pb(s, "div", "V_re ÷ |V|", [270 210]);  pb(s, "div", "V_im ÷ |V|", [270 260]);
+    pk(s, "on c", P + ".on", [300 100]);  pk(s, "on s", P + ".on", [300 170]);
+    pb(s, "switch", "PLL on? c", [400 70], "Criteria", "u2 > Threshold", "Threshold", "0.5");
+    pb(s, "switch", "PLL on? s", [400 140], "Criteria", "u2 > Threshold", "Threshold", "0.5");
+    L(s, "th/1", "cos/1");  L(s, "th/1", "sin/1");
+    L(s, "V/1", "|V|/1");  L(s, "V/1", "re, im/1");  L(s, "|V|/1", "max/1");  L(s, "1e-3/1", "max/2");
+    L(s, "re, im/1", "V_re ÷ |V|/1");  L(s, "max/1", "V_re ÷ |V|/2");
+    L(s, "re, im/2", "V_im ÷ |V|/1");  L(s, "max/1", "V_im ÷ |V|/2");
+    L(s, "cos/1", "PLL on? c/1");  L(s, "on c/1", "PLL on? c/2");  L(s, "V_re ÷ |V|/1", "PLL on? c/3");
+    L(s, "sin/1", "PLL on? s/1");  L(s, "on s/1", "PLL on? s/2");  L(s, "V_im ÷ |V|/1", "PLL on? s/3");
+    L(s, "PLL on? c/1", "c/1");  L(s, "PLL on? s/1", "s/1");
+end
+
+function pllAverage(s, P)
+    % F = F[k-1] + fp - fp[k-Navg] (start fp Navg), f = F / Navg (on = 0: f_sys);
+    % RoCoF = (f - f[k-Nroc]) f0 / (Nroc Ts) (start f_sys)
+    portAt(s, "fp", [20 60]);  portAt(s, "f_sys", [20 300]);  portAt(s, "f", [640 70]);  portAt(s, "RoCoF", [640 330]);
+    pk(s, "Navg", P + ".Navg", [100 120]);  pk(s, "Navg 2", P + ".Navg", [380 100]);
+    pb(s, "delay", "fp[k-Navg]", [180 110], "DelayLengthSource", "Input port", "DelayLengthUpperLimit", "50", ...
+        "InitialConditionSource", "Input port");
+    pb(s, "sum", "F", [290 60], "Inputs", "++-");
+    pb(s, "delay", "F[k-1]", [290 170], "DelayLength", "1", "InitialConditionSource", "Input port");  flip(s, "F[k-1]");
+    pb(s, "gain", "Navg fp", [180 220], "Gain", P + ".Navg");
+    pb(s, "div", "F ÷ Navg", [430 70]);
+    pk(s, "on", P + ".on", [450 140]);
+    pb(s, "switch", "PLL on?", [530 80], "Criteria", "u2 > Threshold", "Threshold", "0.5");
+    pk(s, "Nroc", P + ".Nroc", [300 360]);  pk(s, "Nroc Ts", P + ".Nroc * " + P + ".Ts", [460 380]);
+    pb(s, "delay", "f[k-Nroc]", [380 340], "DelayLengthSource", "Input port", "DelayLengthUpperLimit", "1000", ...
+        "InitialConditionSource", "Input port");
+    pb(s, "sum", "df", [460 320], "Inputs", "+-");
+    pb(s, "gain", "f0", [510 320], "Gain", P + ".f0");
+    pb(s, "div", "÷ Nroc Ts", [570 330]);
+    L(s, "fp/1", "F/2");  L(s, "fp/1", "fp[k-Navg]/1");  L(s, "Navg/1", "fp[k-Navg]/2");  L(s, "fp/1", "fp[k-Navg]/3");
+    L(s, "fp[k-Navg]/1", "F/3");  L(s, "F/1", "F[k-1]/1");  L(s, "F[k-1]/1", "F/1");
+    L(s, "fp/1", "Navg fp/1");  L(s, "Navg fp/1", "F[k-1]/2");
+    L(s, "F/1", "F ÷ Navg/1", "F");  L(s, "Navg 2/1", "F ÷ Navg/2");
+    L(s, "F ÷ Navg/1", "PLL on?/1");  L(s, "on/1", "PLL on?/2");  L(s, "f_sys/1", "PLL on?/3");
+    L(s, "PLL on?/1", "f/1", "f");
+    L(s, "PLL on?/1", "f[k-Nroc]/1");  L(s, "Nroc/1", "f[k-Nroc]/2");  L(s, "f_sys/1", "f[k-Nroc]/3");
+    L(s, "PLL on?/1", "df/1");  L(s, "f[k-Nroc]/1", "df/2");
+    L(s, "df/1", "f0/1");  L(s, "f0/1", "÷ Nroc Ts/1");  L(s, "Nroc Ts/1", "÷ Nroc Ts/2");  L(s, "÷ Nroc Ts/1", "RoCoF/1");
 end

@@ -28,6 +28,8 @@ function pll = pllParameters()
     pll.asset.fBW  = 5;      % [Hz] natural frequency of the loop (bandwidth)
     pll.asset.zeta = 0.707;  % [-]  damping
     pll.asset.Tpre = 0.02;   % [s]  moving-average prefilter on the phasor (0 = off, max 0.05)
+    pll.asset.Tavg = 0;      % [s]  not used by the asset PLL; same fields as the meters, since
+    pll.asset.Trocof = 0;    % [s]  PLL.slx takes either as its argument (struct fields must match)
 
     meter.on     = 1;        % 1: measured (PLL), 0: system frequency
     meter.fBW    = 5;        % [Hz]
