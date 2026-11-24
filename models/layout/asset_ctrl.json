@@ -1,0 +1,2141 @@
+{
+  "blocks": [
+    {
+      "name": "P_set",
+      "type": "Inport",
+      "pos": [
+        35,
+        -177,
+        65,
+        -163
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Q_set",
+      "type": "Inport",
+      "pos": [
+        35,
+        83,
+        65,
+        97
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V_term",
+      "type": "Inport",
+      "pos": [
+        40,
+        413,
+        70,
+        427
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "P_meas",
+      "type": "Inport",
+      "pos": [
+        35,
+        -132,
+        65,
+        -118
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Q_meas",
+      "type": "Inport",
+      "pos": [
+        35,
+        113,
+        65,
+        127
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "SOC",
+      "type": "Inport",
+      "pos": [
+        40,
+        678,
+        70,
+        692
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V_re",
+      "type": "Inport",
+      "pos": [
+        40,
+        738,
+        70,
+        752
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V_im",
+      "type": "Inport",
+      "pos": [
+        40,
+        783,
+        70,
+        797
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "From10",
+      "type": "From",
+      "pos": [
+        380,
+        -13,
+        450,
+        3
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_floor"
+    },
+    {
+      "name": "From2",
+      "type": "From",
+      "pos": [
+        555,
+        -158,
+        625,
+        -142
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_floor"
+    },
+    {
+      "name": "From5",
+      "type": "From",
+      "pos": [
+        530,
+        107,
+        570,
+        123
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "dip"
+    },
+    {
+      "name": "From8",
+      "type": "From",
+      "pos": [
+        825,
+        257,
+        865,
+        273
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "dip"
+    },
+    {
+      "name": "Iq + Iqinj",
+      "type": "Sum",
+      "pos": [
+        1005,
+        -30,
+        1035,
+        0
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "round",
+      "inputs": "|++",
+      "tag": ""
+    },
+    {
+      "name": "Iqh1 Iql1",
+      "type": "Saturate",
+      "pos": [
+        730,
+        225,
+        770,
+        255
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Iqinj in dip",
+      "type": "Switch",
+      "pos": [
+        890,
+        225,
+        930,
+        305
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Kqp Kqi",
+      "type": "SubSystem",
+      "pos": [
+        685,
+        75,
+        755,
+        155
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Kqv",
+      "type": "Gain",
+      "pos": [
+        620,
+        225,
+        670,
+        255
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "PLL",
+      "type": "ModelReference",
+      "pos": [
+        555,
+        720,
+        675,
+        810
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "P_meas unused",
+      "type": "Terminator",
+      "pos": [
+        115,
+        -135,
+        135,
+        -115
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Pmax",
+      "type": "Constant",
+      "pos": [
+        245,
+        -207,
+        315,
+        -183
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Pmax Pmin",
+      "type": "SubSystem",
+      "pos": [
+        340,
+        -210,
+        390,
+        -130
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Pmax out",
+      "type": "Constant",
+      "pos": [
+        1565,
+        -217,
+        1635,
+        -193
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Pmin",
+      "type": "Constant",
+      "pos": [
+        240,
+        -157,
+        315,
+        -133
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Pord to Ip",
+      "type": "Product",
+      "pos": [
+        645,
+        -180,
+        680,
+        -140
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Q error",
+      "type": "Sum",
+      "pos": [
+        275,
+        76,
+        310,
+        134
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "rectangular",
+      "inputs": "+-",
+      "tag": ""
+    },
+    {
+      "name": "Q frozen",
+      "type": "Constant",
+      "pos": [
+        530,
+        78,
+        570,
+        102
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Q loop on?",
+      "type": "Switch",
+      "pos": [
+        470,
+        85,
+        510,
+        195
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Qext to Iq",
+      "type": "Product",
+      "pos": [
+        475,
+        -35,
+        510,
+        5
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Qflag",
+      "type": "Constant",
+      "pos": [
+        345,
+        128,
+        420,
+        152
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Tiq",
+      "type": "SubSystem",
+      "pos": [
+        875,
+        -32,
+        945,
+        2
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Tpord",
+      "type": "SubSystem",
+      "pos": [
+        470,
+        -187,
+        540,
+        -153
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V < Vdip",
+      "type": "RelationalOperator",
+      "pos": [
+        585,
+        500,
+        620,
+        540
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V > Vup",
+      "type": "RelationalOperator",
+      "pos": [
+        585,
+        600,
+        620,
+        640
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V floor",
+      "type": "MinMax",
+      "pos": [
+        725,
+        410,
+        760,
+        450
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V_floor goto",
+      "type": "Goto",
+      "pos": [
+        790,
+        422,
+        860,
+        438
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_floor"
+    },
+    {
+      "name": "Vdip",
+      "type": "Constant",
+      "pos": [
+        490,
+        518,
+        560,
+        542
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Vmin",
+      "type": "Constant",
+      "pos": [
+        490,
+        428,
+        560,
+        452
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Voltage_dip",
+      "type": "Logic",
+      "pos": [
+        728,
+        590,
+        763,
+        630
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Vref0",
+      "type": "Constant",
+      "pos": [
+        310,
+        228,
+        385,
+        252
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Vref0 - V",
+      "type": "Sum",
+      "pos": [
+        420,
+        225,
+        450,
+        255
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "round",
+      "inputs": "|+-",
+      "tag": ""
+    },
+    {
+      "name": "Vt filt",
+      "type": "SubSystem",
+      "pos": [
+        315,
+        403,
+        385,
+        437
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Vup",
+      "type": "Constant",
+      "pos": [
+        495,
+        618,
+        560,
+        642
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "current limit logic",
+      "type": "SubSystem",
+      "pos": [
+        1230,
+        -233,
+        1370,
+        203
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "dPmax dPmin",
+      "type": "RateLimiter",
+      "pos": [
+        410,
+        -185,
+        450,
+        -155
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "dbd1 dbd2",
+      "type": "DeadZone",
+      "pos": [
+        520,
+        225,
+        560,
+        255
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "dip goto",
+      "type": "Goto",
+      "pos": [
+        805,
+        602,
+        845,
+        618
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "dip"
+    },
+    {
+      "name": "ff + PI",
+      "type": "Sum",
+      "pos": [
+        800,
+        -30,
+        830,
+        0
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "round",
+      "inputs": "|++",
+      "tag": ""
+    },
+    {
+      "name": "freeze in dip",
+      "type": "Switch",
+      "pos": [
+        595,
+        75,
+        635,
+        155
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "no Iqinj",
+      "type": "Constant",
+      "pos": [
+        800,
+        278,
+        840,
+        302
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "no Q loop",
+      "type": "Constant",
+      "pos": [
+        360,
+        167,
+        400,
+        183
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "ip_cmd",
+      "type": "Outport",
+      "pos": [
+        1730,
+        -132,
+        1760,
+        -118
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "iq_cmd",
+      "type": "Outport",
+      "pos": [
+        1720,
+        88,
+        1750,
+        102
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "P_avail",
+      "type": "Outport",
+      "pos": [
+        1730,
+        -212,
+        1760,
+        -198
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "pll_c",
+      "type": "Outport",
+      "pos": [
+        1685,
+        728,
+        1715,
+        742
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "pll_s",
+      "type": "Outport",
+      "pos": [
+        1685,
+        758,
+        1715,
+        772
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "f_pll",
+      "type": "Outport",
+      "pos": [
+        1685,
+        788,
+        1715,
+        802
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    }
+  ],
+  "areas": [
+    {
+      "title": "Voltage filter and dip detection",
+      "pos": [
+        230,
+        377,
+        1056,
+        661
+      ],
+      "color": "[0.949020, 0.949020, 0.949020]"
+    },
+    {
+      "title": "Outputs",
+      "pos": [
+        1548,
+        -247,
+        1780,
+        837
+      ],
+      "color": "[0.950000, 0.950000, 0.950000]"
+    },
+    {
+      "title": "PLL (angle of the current injection, frequency)",
+      "pos": [
+        230,
+        706,
+        1498,
+        833
+      ],
+      "color": "[0.949020, 0.949020, 0.949020]"
+    },
+    {
+      "title": "Current limit logic",
+      "pos": [
+        1081,
+        -245,
+        1498,
+        661
+      ],
+      "color": "[0.878000, 0.965000, 0.925000]"
+    },
+    {
+      "title": "Q path (Qflag 1 closed loop, 0 open loop) and reactive current injection",
+      "pos": [
+        230,
+        -75,
+        1056,
+        351
+      ],
+      "color": "[0.894118, 0.905882, 0.988235]"
+    },
+    {
+      "title": "P path",
+      "pos": [
+        230,
+        -245,
+        1056,
+        -96
+      ],
+      "color": "[0.894000, 0.906000, 0.988000]"
+    },
+    {
+      "title": "Inputs",
+      "pos": [
+        20,
+        -245,
+        188,
+        835
+      ],
+      "color": "[0.949020, 0.949020, 0.949020]"
+    }
+  ],
+  "trees": [
+    {
+      "src": "Tiq",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            950,
+            -15
+          ],
+          [
+            1000,
+            -15
+          ]
+        ],
+        "dst": "Iq + Iqinj",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Iqh1 Iql1",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            775,
+            240
+          ],
+          [
+            885,
+            240
+          ]
+        ],
+        "dst": "Iqinj in dip",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Tpord",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            545,
+            -170
+          ],
+          [
+            640,
+            -170
+          ]
+        ],
+        "dst": "Pord to Ip",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Qext to Iq",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            515,
+            -15
+          ],
+          [
+            795,
+            -15
+          ]
+        ],
+        "dst": "ff + PI",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "V > Vup",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            625,
+            620
+          ],
+          [
+            726,
+            620
+          ]
+        ],
+        "dst": "Voltage_dip",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "Vt filt",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              390,
+              420
+            ],
+            [
+              435,
+              420
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              435,
+              420
+            ],
+            [
+              435,
+              260
+            ]
+          ],
+          "dst": "Vref0 - V",
+          "dt": "inport",
+          "dp": 2
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              435,
+              420
+            ],
+            [
+              460,
+              420
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 4,
+          "parent": 3,
+          "points": [
+            [
+              460,
+              420
+            ],
+            [
+              720,
+              420
+            ]
+          ],
+          "dst": "V floor",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 5,
+          "parent": 3,
+          "points": [
+            [
+              460,
+              420
+            ],
+            [
+              460,
+              510
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 6,
+          "parent": 5,
+          "points": [
+            [
+              460,
+              510
+            ],
+            [
+              580,
+              510
+            ]
+          ],
+          "dst": "V < Vdip",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 7,
+          "parent": 5,
+          "points": [
+            [
+              460,
+              510
+            ],
+            [
+              460,
+              610
+            ],
+            [
+              580,
+              610
+            ]
+          ],
+          "dst": "V > Vup",
+          "dt": "inport",
+          "dp": 1
+        }
+      ]
+    },
+    {
+      "src": "Vmin",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            565,
+            440
+          ],
+          [
+            720,
+            440
+          ]
+        ],
+        "dst": "V floor",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "Q error",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            315,
+            105
+          ],
+          [
+            465,
+            105
+          ]
+        ],
+        "dst": "Q loop on?",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Vref0",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            390,
+            240
+          ],
+          [
+            415,
+            240
+          ]
+        ],
+        "dst": "Vref0 - V",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Pord to Ip",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            685,
+            -160
+          ],
+          [
+            1225,
+            -160
+          ]
+        ],
+        "dst": "current limit logic",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Iqinj in dip",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            935,
+            265
+          ],
+          [
+            1020,
+            265
+          ],
+          [
+            1020,
+            5
+          ]
+        ],
+        "dst": "Iq + Iqinj",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "Q_meas",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            70,
+            120
+          ],
+          [
+            270,
+            120
+          ]
+        ],
+        "dst": "Q error",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "V_re",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            75,
+            745
+          ],
+          [
+            550,
+            745
+          ]
+        ],
+        "dst": "PLL",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "PLL",
+      "sp": 3,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            680,
+            795
+          ],
+          [
+            1680,
+            795
+          ]
+        ],
+        "dst": "f_pll",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "From10",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            455,
+            -5
+          ],
+          [
+            470,
+            -5
+          ]
+        ],
+        "dst": "Qext to Iq",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "From8",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            870,
+            265
+          ],
+          [
+            885,
+            265
+          ]
+        ],
+        "dst": "Iqinj in dip",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "SOC",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            75,
+            685
+          ],
+          [
+            1143,
+            685
+          ],
+          [
+            1143,
+            130
+          ],
+          [
+            1225,
+            130
+          ]
+        ],
+        "dst": "current limit logic",
+        "dt": "inport",
+        "dp": 3
+      }
+    },
+    {
+      "src": "V_term",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            75,
+            420
+          ],
+          [
+            310,
+            420
+          ]
+        ],
+        "dst": "Vt filt",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "From5",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            575,
+            115
+          ],
+          [
+            590,
+            115
+          ]
+        ],
+        "dst": "freeze in dip",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "PLL",
+      "sp": 2,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            680,
+            765
+          ],
+          [
+            1680,
+            765
+          ]
+        ],
+        "dst": "pll_s",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Q_set",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              70,
+              90
+            ],
+            [
+              256,
+              90
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              256,
+              90
+            ],
+            [
+              270,
+              90
+            ]
+          ],
+          "dst": "Q error",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              256,
+              90
+            ],
+            [
+              256,
+              -25
+            ],
+            [
+              470,
+              -25
+            ]
+          ],
+          "dst": "Qext to Iq",
+          "dt": "inport",
+          "dp": 1
+        }
+      ]
+    },
+    {
+      "src": "From2",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            630,
+            -150
+          ],
+          [
+            640,
+            -150
+          ]
+        ],
+        "dst": "Pord to Ip",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "PLL",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            680,
+            735
+          ],
+          [
+            1680,
+            735
+          ]
+        ],
+        "dst": "pll_c",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "P_set",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            70,
+            -170
+          ],
+          [
+            335,
+            -170
+          ]
+        ],
+        "dst": "Pmax Pmin",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "no Q loop",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            405,
+            175
+          ],
+          [
+            465,
+            175
+          ]
+        ],
+        "dst": "Q loop on?",
+        "dt": "inport",
+        "dp": 3
+      }
+    },
+    {
+      "src": "no Iqinj",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            845,
+            290
+          ],
+          [
+            885,
+            290
+          ]
+        ],
+        "dst": "Iqinj in dip",
+        "dt": "inport",
+        "dp": 3
+      }
+    },
+    {
+      "src": "Iq + Iqinj",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1040,
+            -15
+          ],
+          [
+            1225,
+            -15
+          ]
+        ],
+        "dst": "current limit logic",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "current limit logic",
+      "sp": 2,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1375,
+            95
+          ],
+          [
+            1715,
+            95
+          ]
+        ],
+        "dst": "iq_cmd",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Kqp Kqi",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            760,
+            115
+          ],
+          [
+            815,
+            115
+          ],
+          [
+            815,
+            5
+          ]
+        ],
+        "dst": "ff + PI",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "current limit logic",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1375,
+            -125
+          ],
+          [
+            1725,
+            -125
+          ]
+        ],
+        "dst": "ip_cmd",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "freeze in dip",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            640,
+            115
+          ],
+          [
+            680,
+            115
+          ]
+        ],
+        "dst": "Kqp Kqi",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "ff + PI",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            835,
+            -15
+          ],
+          [
+            870,
+            -15
+          ]
+        ],
+        "dst": "Tiq",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Voltage_dip",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            768,
+            610
+          ],
+          [
+            800,
+            610
+          ]
+        ],
+        "dst": "dip goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "dbd1 dbd2",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            565,
+            240
+          ],
+          [
+            615,
+            240
+          ]
+        ],
+        "dst": "Kqv",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "dPmax dPmin",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            455,
+            -170
+          ],
+          [
+            465,
+            -170
+          ]
+        ],
+        "dst": "Tpord",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Vup",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            565,
+            630
+          ],
+          [
+            580,
+            630
+          ]
+        ],
+        "dst": "V > Vup",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "Vref0 - V",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            455,
+            240
+          ],
+          [
+            515,
+            240
+          ]
+        ],
+        "dst": "dbd1 dbd2",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Vdip",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            565,
+            530
+          ],
+          [
+            580,
+            530
+          ]
+        ],
+        "dst": "V < Vdip",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "V_im",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            75,
+            790
+          ],
+          [
+            550,
+            790
+          ]
+        ],
+        "dst": "PLL",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "V floor",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            765,
+            430
+          ],
+          [
+            785,
+            430
+          ]
+        ],
+        "dst": "V_floor goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "V < Vdip",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            625,
+            520
+          ],
+          [
+            686,
+            520
+          ],
+          [
+            686,
+            600
+          ],
+          [
+            726,
+            600
+          ]
+        ],
+        "dst": "Voltage_dip",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Qflag",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            425,
+            140
+          ],
+          [
+            465,
+            140
+          ]
+        ],
+        "dst": "Q loop on?",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "Q loop on?",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            515,
+            140
+          ],
+          [
+            590,
+            140
+          ]
+        ],
+        "dst": "freeze in dip",
+        "dt": "inport",
+        "dp": 3
+      }
+    },
+    {
+      "src": "Q frozen",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            575,
+            90
+          ],
+          [
+            590,
+            90
+          ]
+        ],
+        "dst": "freeze in dip",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Pmin",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            320,
+            -145
+          ],
+          [
+            335,
+            -145
+          ]
+        ],
+        "dst": "Pmax Pmin",
+        "dt": "inport",
+        "dp": 3
+      }
+    },
+    {
+      "src": "Pmax out",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1640,
+            -205
+          ],
+          [
+            1725,
+            -205
+          ]
+        ],
+        "dst": "P_avail",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Pmax Pmin",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            395,
+            -170
+          ],
+          [
+            405,
+            -170
+          ]
+        ],
+        "dst": "dPmax dPmin",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Pmax",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            320,
+            -195
+          ],
+          [
+            335,
+            -195
+          ]
+        ],
+        "dst": "Pmax Pmin",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "P_meas",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            70,
+            -125
+          ],
+          [
+            110,
+            -125
+          ]
+        ],
+        "dst": "P_meas unused",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Kqv",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            675,
+            240
+          ],
+          [
+            725,
+            240
+          ]
+        ],
+        "dst": "Iqh1 Iql1",
+        "dt": "inport",
+        "dp": 1
+      }
+    }
+  ],
+  "system": "BESS_ctrl"
+}

@@ -74,7 +74,7 @@ function files = reportMode(opts, folder)
             cache.(key) = struct("out", o, "cases", c);
         end
         R = cache.(key);
-        names = caseNames(R.cases);
+        names = caseLabels(R.cases);
         idx = zeros(1, numel(f.cases));
         for k = 1:numel(f.cases)
             j = find(names == f.cases(k), 1);
@@ -102,7 +102,7 @@ function files = reportMode(opts, folder)
             for s = 1:numel(sigs)
                 nSig = nSig + 1;
                 for k = 1:numel(idx)
-                    [tt, v] = signal(R.out(idx(k)), sigs(s));
+                    [tt, v] = resultSignal(R.out(idx(k)), sigs(s));
                     if f.delta
                         v = v - interp1(tt, v, f.t0);
                     end
@@ -186,7 +186,7 @@ function files = debugMode(opts, folder, root)
                 for sig = groups{g}
                     for k = 1:numel(out)
                         if ~isempty(out(k).ErrorMessage), continue, end
-                        [tt, y] = signal(out(k), sig);
+                        [tt, y] = resultSignal(out(k), sig);
                         if isempty(tt), continue, end
                         win = views{v, 2};  if isempty(win), win = [tt(1) tt(end)]; end
                         [tt, y] = thin(tt, y, win);      % keeps peaks, saves graphics memory
@@ -197,7 +197,7 @@ function files = debugMode(opts, folder, root)
                     end
                 end
                 hold(ax(g), "off");  grid(ax(g), "on");  box(ax(g), "on");
-                title(ax(g), strjoin(groups{g}, ", ") + " [" + sigUnit(groups{g}(1)) + "]" + ...
+                title(ax(g), strjoin(groups{g}, ", ") + " [" + signalUnit(groups{g}(1)) + "]" + ...
                     dashedNote(groups{g}), "Interpreter", "none", "FontWeight", "normal");
             end
             linkaxes(ax, "x");
@@ -314,45 +314,8 @@ function files = exportFigure(fh, folder, name, opts)
     end
 end
 
-function names = caseNames(cases)
-    if ~isempty(cases.Properties.RowNames)
-        names = string(cases.Properties.RowNames);
-    else
-        names = caseLabels(cases);
-    end
-end
-
-function [t, v] = signal(o, sig)
-    % logged signal in plot units (MW, Mvar, pu, Hz, -); derived: PF
-    t = [];  v = [];
-    logged = string(o.yout.getElementNames);
-    if sig == "PF"
-        [t, P] = signal(o, "P_poc");  [~, Q] = signal(o, "Q_poc");
-        v = P ./ hypot(P, Q);  return
-    end
-    if ~ismember(sig, logged), return, end
-    x = o.yout.get(char(sig)).Values;
-    t = x.Time;  v = squeeze(x.Data) * sigScale(sig);
-end
-
 function r = isReference(sig)
     r = ismember(sig, ["P_ref", "Q_ref", "P_avail_wpp", "P_avail_spp", "P_bess_set"]);
-end
-
-function k = sigScale(sig)
-    if startsWith(sig, ["P_", "Q_"]), k = 1e-6;
-    elseif sig == "f", k = 50;
-    else, k = 1;
-    end
-end
-
-function u = sigUnit(sig)
-    if startsWith(sig, "P_"), u = "MW";
-    elseif startsWith(sig, "Q_"), u = "Mvar";
-    elseif startsWith(sig, "V_"), u = "pu";
-    elseif sig == "f", u = "Hz";
-    else, u = "-";
-    end
 end
 
 function s = sigLabel(sig)
@@ -366,7 +329,7 @@ end
 
 function s = axisLabel(sigs, delta, single)
     % y label: the main signal (or "P" for several powers of one case) and the unit
-    u = sigUnit(sigs(1));
+    u = signalUnit(sigs(1));
     if single && numel(sigs) > 1
         s = extractBefore(sigs(1) + "_", "_") + " [" + u + "]";
     else

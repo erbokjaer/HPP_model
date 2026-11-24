@@ -51,9 +51,7 @@ function st = rapidTarget(p, opts)
 
     % Rapid Accelerator cannot run while the model is in Fast Restart (e.g.
     % after a normal-mode run with FastRestart=true): switch it off first
-    if bdIsLoaded("HPP") && strcmp(get_param("HPP", "FastRestart"), "on")
-        set_param("HPP", "FastRestart", "off");
-    end
+    fastRestartOff();
 
     key = struct("sig", compileSignature(p), "models", modelStamp(), ...
         "noCompilerHook", getenv("HPP_TEST_NO_COMPILER"));
@@ -109,24 +107,30 @@ end
 
 function buildTarget(p)
     load_system("HPP");
-    if strcmp(get_param("HPP", "FastRestart"), "on")
-        set_param("HPP", "FastRestart", "off");          % Fast Restart and Rapid Accelerator exclude each other
-    end
-    % the build reads p from the base workspace and the network choice from
-    % the model workspace; put them there for the build and restore afterwards
+    fastRestartOff();                                    % Fast Restart and Rapid Accelerator exclude each other
+    % the build reads p from the base workspace and the variant choices
+    % (variantVars) from the model workspace or as globals; put them there
+    % for the build and restore afterwards
     hadP = evalin("base", "exist('p', 'var') == 1");
     pOld = [];
     if hadP, pOld = evalin("base", "p"); end
     assignin("base", "p", p);
     restoreP = onCleanup(@() restoreBase(hadP, pOld)); %#ok<NASGU>
     ws = get_param("HPP", "ModelWorkspace");
-    netOld = getVariable(ws, "HPP_network");
-    assignin(ws, "HPP_network", networkCode(p.net.solverType));
-    restoreNet = onCleanup(@() assignin(ws, "HPP_network", netOld)); %#ok<NASGU>
-    delOld = getVariable(ws, "HPP_delays");
     [~, dc] = delayMode(p, table());
-    assignin(ws, "HPP_delays", dc);
-    restoreDel = onCleanup(@() assignin(ws, "HPP_delays", delOld)); %#ok<NASGU>
+    restore = {};
+    for v = variantVars(p, dc)
+        if v.where == "global"
+            had = evalin("base", "exist('" + v.name + "', 'var') == 1");  old = [];
+            if had, old = evalin("base", v.name); end
+            assignin("base", v.name, v.value);
+            restore{end+1} = onCleanup(@() restoreBaseVar(v.name, had, old)); %#ok<AGROW>
+        else
+            old = getVariable(ws, v.name);
+            assignin(ws, v.name, v.value);
+            restore{end+1} = onCleanup(@() assignin(ws, v.name, old)); %#ok<AGROW>
+        end
+    end
 
     fprintf("Building the Rapid Accelerator target of HPP (once per layout / model change) ...\n");
     t = tic;
@@ -135,10 +139,14 @@ function buildTarget(p)
 end
 
 function restoreBase(hadP, pOld)
-    if hadP
-        assignin("base", "p", pOld);
+    restoreBaseVar("p", hadP, pOld);
+end
+
+function restoreBaseVar(name, had, old)
+    if had
+        assignin("base", name, old);
     else
-        evalin("base", "clear p");
+        evalin("base", "clear " + name);
     end
 end
 
@@ -147,10 +155,4 @@ function s = modelStamp()
     root = currentProject().RootFolder;
     d = dir(fullfile(root, "models", "**", "*.slx"));
     s = max([d.datenum]);
-end
-
-function sig = compileSignature(p)
-    % same compile-time values as runCase's Fast Restart check
-    sig = struct("N", [p.wt.N, p.pv.N, p.bess.N], "Ts", p.sim.Ts, ...
-        "delays", delaySignature(p), "network", p.net.solverType);
 end

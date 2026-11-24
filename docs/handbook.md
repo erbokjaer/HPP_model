@@ -212,7 +212,7 @@ end
 | `scripts/plotAllResults.m` ~42 | `results/figures/...` |
 | `scripts/rapidTarget.m` ~147 | fingerprint file / model files |
 | `scripts/checkModels.m` ~37 | default model root `models/` |
-| `utilities/buildHPP.m` ~72 | model folders |
+| `utilities/build/buildHPP.m` ~72 | model folders |
 | `utilities/projectStartup.m`, `main.m` | README, `results/` |
 
 **Why.** The result does not depend on the current folder. A user may `cd` anywhere, a parsim worker starts in a temporary folder, and an HPC job starts in its submit folder. All still write to the same `results/<set>/`. Together with "no `cd`, no `addpath`" this makes every script location-independent.
@@ -716,7 +716,7 @@ Copied into `p.ctrl.hppc.par` by `controllerParameters` (all fields). Per unit o
 | `par.isV`, `par.isPF`, `par.tanphi`, `par.KpQ`, `par.KiQ` | see A2.16 | derived for tunable block expressions |
 | `cascade` | struct | timing check result (not in `par`) |
 
-> Note (code against code comment): `controllerParameters.m` line 25 marks `Ppoc_max` "(not used yet)". It is used: the HPPC template has a constant `par.Ppoc_max` feeding the "export limit" stage (`utilities/buildHPP.m` ~line 2053), and `models/ctrl/HPPC.slx` (`system_root.xml`) contains `par.Ppoc_max`. The comment is stale.
+> Note (code against code comment): `controllerParameters.m` line 25 marks `Ppoc_max` "(not used yet)". It is used: the HPPC template has a constant `par.Ppoc_max` feeding the "export limit" stage (`utilities/build/buildHPP.m` ~line 2053), and `models/ctrl/HPPC.slx` (`system_root.xml`) contains `par.Ppoc_max`. The comment is stale.
 
 **Plant controllers (`ctrl.wppc`, `ctrl.sppc`, `ctrl.bessc`).** From the local function `plantCtrl(Prated, N)`:
 
@@ -809,7 +809,7 @@ N   = numel(par.share);         % plant controllers only: port width
 clear pDefault
 ```
 
-In `HPP.slx`, the Model block for the HPPC sets `par` to `p.ctrl.hppc.par`, and the plant controller blocks to `p.ctrl.<wppc|sppc|bessc>.par` (`setArg`, `utilities/buildHPP.m` ~lines 901, 988).
+In `HPP.slx`, the Model block for the HPPC sets `par` to `p.ctrl.hppc.par`, and the plant controller blocks to `p.ctrl.<wppc|sppc|bessc>.par` (`setArg`, `utilities/build/buildHPP.m` ~lines 901, 988).
 
 **Assets: `ap`.** Each asset model has the model argument `ap` and a model workspace with `ap = pDefault.<type>.ap(1)` and `Tsim = pDefault.sim.Ts`. In `HPP.slx` instance k gets `p.<type>.ap(k)` (`buildHPP.m` ~line 1048: `setArg(..., "ap", sprintf("p.%s.ap(%d)", pl.t, k))`). Inside the asset model, the asset controller Model block gets `par = ap.ctrl` (~line 803). So an asset controller's `par` is passed through two levels: `p.<type>.ap(k).ctrl` → asset model `ap.ctrl` → controller `par`.
 
@@ -823,7 +823,7 @@ In `HPP.slx`, the Model block for the HPPC sets `par` to `p.ctrl.hppc.par`, and 
 
 **Consequences.**
 - A new controller parameter: add it to the component function (e.g. `p.hppc.X`). It reaches `par` automatically if the component is copied wholesale (`p.hppc`, `p.pc.*`, `p.wt.iec.ctrl`, `p.pv.wecc.ctrl`, `p.bess.wecc.ctrl`). Then use `par.X` in the model.
-- The interface (argument name and source) is defined in `utilities/modelInterfaces.m` (`arg`, `src`), and `checkModels` checks that every `par`/`ap` field a model uses exists in `HPP_parameters()` (A3).
+- The interface (argument name and source) is defined in `utilities/build/modelInterfaces.m` (`arg`, `src`), and `checkModels` checks that every `par`/`ap` field a model uses exists in `HPP_parameters()` (A3).
 - `Ts` and `N` are not arguments. They are compile-time. N fixes the port widths, so a DLL is built for one N (design.md section 3).
 
 ### A2.16 The block-expression rule and the derived fields it requires
@@ -893,7 +893,7 @@ Default cascade (Q control): asset 1.1/10 = 0.11 s, plant Q 1.1/1 = 1.1 s, HPPC 
 
 ## A3. Model generation and model files
 
-This chapter explains how the Simulink models are made, which of them are generated and which are maintained by hand, and how the generator (`utilities/buildHPP.m`, about 2,900 lines) works function by function. It also covers the interface definition (`utilities/modelInterfaces.m`), the checks on hand-maintained models (`scripts/checkModels.m`, `scripts/checkModelBuild.m`) and what still has to happen before the controllers become IEEE/CIGRE DLLs for PSCAD. The physics inside the network and the assets, and the control laws, are in Part B; here they appear only as far as the code structure needs them.
+This chapter explains how the Simulink models are made, which of them are generated and which are maintained by hand, and how the generator (`utilities/build/buildHPP.m`, about 2,900 lines) works function by function. It also covers the interface definition (`utilities/build/modelInterfaces.m`), the checks on hand-maintained models (`scripts/checkModels.m`, `scripts/checkModelBuild.m`) and what still has to happen before the controllers become IEEE/CIGRE DLLs for PSCAD. The physics inside the network and the assets, and the control laws, are in Part B; here they appear only as far as the code structure needs them.
 
 ### A3.1 The model files and who owns them
 
@@ -911,9 +911,9 @@ There are eleven model files:
 
 The rule, stated in the header of `buildHPP.m`, in `README.md` ("Who owns which model") and in `docs/design.md` §3 ("Ownership (2026-11-19)"):
 
-- `HPP.slx` is always generated and is never edited by hand. Its description string, set by the build, says so: "Hierarchical HPP model, generated by utilities/buildHPP.m. Do not edit by hand: rebuild instead."
+- `HPP.slx` is always generated and is never edited by hand. Its description string, set by the build, says so: "Hierarchical HPP model, generated by utilities/build/buildHPP.m. Do not edit by hand: rebuild instead."
 - The controller and asset models are the source. They are developed in the Simulink editor. The templates in `buildHPP.m` only create models that are missing.
-- The interface between the two worlds (port names and order, the model argument and its default) is written down once, in `utilities/modelInterfaces.m`. `checkModels` verifies that the hand-maintained models still match it.
+- The interface between the two worlds (port names and order, the model argument and its default) is written down once, in `utilities/build/modelInterfaces.m`. `checkModels` verifies that the hand-maintained models still match it.
 
 #### Why HPP.slx is generated
 
@@ -1391,7 +1391,7 @@ The code comment notes that derived values (tan φ, mode flags, mode-dependent g
 
 Conventions followed by every template: all signals `double`, per unit on the model's base; `%#codegen` so the code can be generated; persistent variables for state where needed (`dip freeze`, `ramp limiter`); comments in the code that state the function's intent. Code inside a MATLAB Function block is not restricted by the tunability rule (expressions on `par` there are evaluated in the generated code at run time).
 
-### A3.9 utilities/modelInterfaces.m
+### A3.9 utilities/build/modelInterfaces.m
 
 #### What
 
@@ -1500,7 +1500,7 @@ Consequences for development now: keep new controller logic within the interface
 
 ### Recreating it
 
-1. Write `utilities/modelInterfaces.m`: for each of the ten controller and asset models, folder, input and output port names in order, argument name (`par` / `ap`) and default path in `HPP_parameters()`.
+1. Write `utilities/build/modelInterfaces.m`: for each of the ten controller and asset models, folder, input and output port names in order, argument name (`par` / `ap`) and default path in `HPP_parameters()`.
 2. Write the parameter side first (chapter A2): `p.ctrl.<c>.{Ts, Pbase, par}`, `p.<type>.ap(k)` with `ctrl` and `gen`, `p.comm.*` and `p.comm.steps.*`, `p.net.solver`, and derived `par` fields so that block expressions need only + − × ÷.
 3. In `buildHPP.m`, write the generic helpers: `newSubsystem`, `inport`, `ln`, `gotoFrom`, `addGoto`/`addFrom`, `portY`, `place`, `rowInto`/`rowFrom`, `setArg`, `addMatlabFunction` (Stateflow API, `Scope = 'Parameter'`), `registerInProject`, `renumberPorts`, `hideStructuralNames`, `areaColor`, `addArea`, `alignAreaGrid`.
 4. Write the controller layout helpers (`stg`, `rowChain`, `ctrlSection`, `areaAround`, `alignColumns`, `ctrlInputs`, `ctrlOutputs`, `tagColor`, `nb`, `kc`, `lagBlk`, `contLag`, `piBlk`, `ctrlHeader` with the MATLAB-code model workspace and `ParameterArgumentNames`, `ctrlSave`).
@@ -1868,7 +1868,7 @@ All cases: `q = {"grid.Qstep.dQ", 30e6}`, a +30 Mvar Q_ref step at 40 s (default
 
 This chapter describes what physical plant the model represents, how it is reduced to a small number of converter models, which per-unit bases each control level uses, and the modelling choices that everything else rests on: positive-sequence phasor (RMS) simulation, a 1 ms fixed step with `ode1`, the sign conventions and the control hierarchy. It ends with how this structure serves the PhD question.
 
-Sources: `params/windTurbineParameters.m`, `params/pvParameters.m`, `params/batteryParameters.m`, `params/gridParameters.m`, `params/networkParameters.m`, `params/simulationParameters.m`, `params/deriveParameters.m`, `params/controllerParameters.m`, `utilities/buildHPP.m` (functions `buildTop`, `buildPlantSub`, `buildHppcSub`, `buildAsset`, `makeLink`), `docs/design.md` sections 1–5, 9 and 11, and the memory note on vendor plant controllers.
+Sources: `params/windTurbineParameters.m`, `params/pvParameters.m`, `params/batteryParameters.m`, `params/gridParameters.m`, `params/networkParameters.m`, `params/simulationParameters.m`, `params/deriveParameters.m`, `params/controllerParameters.m`, `utilities/build/buildHPP.m` (functions `buildTop`, `buildPlantSub`, `buildHppcSub`, `buildAsset`, `makeLink`), `docs/design.md` sections 1–5, 9 and 11, and the memory note on vendor plant controllers.
 
 ### B1.1 The plant
 
@@ -2190,7 +2190,7 @@ The reason: in real HPPs, vendors supply their assets together with their own pl
 
 This chapter covers the electrical network between the converters and the grid: the nodal phasor solver (default), how the converters couple to it, the measurement points, the grid Thevenin equivalent and the grid events. It then covers the alternative Simscape Electrical network in frequency-and-time mode, its validation against the nodal model, and the known numerical artefacts.
 
-Sources: `params/networkParameters.m`, `params/gridParameters.m`, `params/networkSolverData.m`, `params/deriveParameters.m`, `utilities/buildHPP.m` (functions `buildNetworkVariants` ~line 2410, `buildNetwork` ~line 367, `buildNetworkSimscape` ~line 2439, `trBlock`, `piBlock`, `meterBlock`, `vMeterBlock`, `convBlock`, `phasorBody`, `buildAsset`, `buildTSO`), `scripts/networkCode.m`, `experiments/simscapeGrid/ftGridTest.m`, `docs/design.md` sections 5, 8, 10, 11, 13, commits `54bf4da`, `8a6d58d`, `08685a1`, `fb180ee`, the memory note "grid-simscape-ft".
+Sources: `params/networkParameters.m`, `params/gridParameters.m`, `params/networkSolverData.m`, `params/deriveParameters.m`, `utilities/build/buildHPP.m` (functions `buildNetworkVariants` ~line 2410, `buildNetwork` ~line 367, `buildNetworkSimscape` ~line 2439, `trBlock`, `piBlock`, `meterBlock`, `vMeterBlock`, `convBlock`, `phasorBody`, `buildAsset`, `buildTSO`), `scripts/networkCode.m`, `experiments/simscapeGrid/ftGridTest.m`, `docs/design.md` sections 5, 8, 10, 11, 13, commits `54bf4da`, `8a6d58d`, `08685a1`, `fb180ee`, the memory note "grid-simscape-ft".
 
 ### B2.1 Overview: two network models in one Variant Subsystem
 
@@ -2563,7 +2563,7 @@ The controllers start from zero measurements (memories with initial value 0, ope
 
 This chapter describes the three asset types at the bottom of the hierarchy: the wind turbine (IEC 61400-27-1 Type 4A), the PV inverter station (WECC REEC_B + REGC_A) and the battery (WECC REEC_C + REGC_A + an energy/SOC model). For each one it covers the block structure, the equations, every parameter and its value, what was simplified, and why. It starts with what the three have in common: the interface, the per-unit system, the sample times and the coupling to the network.
 
-Sources used: the models themselves (`models/ctrl/WT_ctrl.slx`, `PV_ctrl.slx`, `BESS_ctrl.slx`, `models/assets/WT_asset.slx`, `PV_asset.slx`, `BESS_asset.slx`, read from their XML), the templates in `utilities/buildHPP.m` (`buildWTCtrlType4A` ~line 1730, `buildReecCtrl` ~line 1826, `buildAsset` ~line 755, helpers `lagBlk`, `contLag`, `piBlk` ~lines 1658–1692), `params/windTurbineParameters.m`, `pvParameters.m`, `batteryParameters.m`, `controllerParameters.m`, `deriveParameters.m`, `utilities/modelInterfaces.m`, `docs/design.md` (sections 2, 4.3, 5, 8 stages 3–4, 10, 11, 13) and the commit messages (mainly `0e70343` "Stages 3-4", `54bf4da` "Stage 2", `61bc052`/`ae5559d` (ode1), `4a15dea`/`ee3b136` (tunable expressions, `contLag`)).
+Sources used: the models themselves (`models/ctrl/WT_ctrl.slx`, `PV_ctrl.slx`, `BESS_ctrl.slx`, `models/assets/WT_asset.slx`, `PV_asset.slx`, `BESS_asset.slx`, read from their XML), the templates in `utilities/build/buildHPP.m` (`buildWTCtrlType4A` ~line 1730, `buildReecCtrl` ~line 1826, `buildAsset` ~line 755, helpers `lagBlk`, `contLag`, `piBlk` ~lines 1658–1692), `params/windTurbineParameters.m`, `pvParameters.m`, `batteryParameters.m`, `controllerParameters.m`, `deriveParameters.m`, `utilities/build/modelInterfaces.m`, `docs/design.md` (sections 2, 4.3, 5, 8 stages 3–4, 10, 11, 13) and the commit messages (mainly `0e70343` "Stages 3-4", `54bf4da` "Stage 2", `61bc052`/`ae5559d` (ode1), `4a15dea`/`ee3b136` (tunable expressions, `contLag`)).
 
 The models and the templates agree block for block and line for line (see "Templates and models" at the end of the chapter). Where `docs/design.md` and the code disagree, the code is described and the difference is noted.
 
@@ -2594,14 +2594,14 @@ One asset can stand for `nAgg` identical physical units at the same node (aggreg
 
 #### Consequences
 
-- To change a converter model, edit `<type>_asset.slx`. To change the control, edit `<type>_ctrl.slx`. `HPP.slx` does not change unless the ports change (then also `utilities/modelInterfaces.m` and the wiring in `buildHPP.m`; see A3).
+- To change a converter model, edit `<type>_asset.slx`. To change the control, edit `<type>_ctrl.slx`. `HPP.slx` does not change unless the ports change (then also `utilities/build/modelInterfaces.m` and the wiring in `buildHPP.m`; see A3).
 - The BESS has its own asset controller even though the BESS plant controller (EMS) exists. design.md section 2 gives the reason: the EMS decides *how much* power over minutes to hours (SOC management); the asset controller decides *how* it is delivered (current control, converter limits and the BMS limits for SOC and current). These are different time scales and functions, and keeping them separate makes the three asset types structurally the same. In the WECC set this split is REPC (plant) and REEC_C (asset).
 
 ### B3.2 The common interface
 
 #### Ports
 
-The ports are defined once in `utilities/modelInterfaces.m`. `HPP.slx` connects by port number, and `scripts/checkModels.m` compares the hand-maintained models against this list.
+The ports are defined once in `utilities/build/modelInterfaces.m`. `HPP.slx` connects by port number, and `scripts/checkModels.m` compares the hand-maintained models against this list.
 
 **Asset controllers** (`WT_ctrl`, `PV_ctrl`, `BESS_ctrl`), model argument `par`:
 
@@ -2639,7 +2639,7 @@ The ports are defined once in `utilities/modelInterfaces.m`. `HPP.slx` connects 
 | 5 | `I_im` | pu (asset) | same |
 | 6 | `SOC` (BESS only) | – | Mux → `SOC_k` → BESSC (memory, delay) and `SOC_plant` (logging) |
 
-The wiring is in `buildPlantSub` (`utilities/buildHPP.m`, ~line 963).
+The wiring is in `buildPlantSub` (`utilities/build/buildHPP.m`, ~line 963).
 
 The design table in design.md section 4.3 also lists an input `omega_gen` for a Type 4B drive train. It does not exist in the models: only Type 4A is built (design.md section 9: "Wind model: IEC 61400-27-1 Type 4A (no drive-train model) for now").
 
@@ -3155,7 +3155,7 @@ From design.md (stages 3–4, section 10) and from the code:
 3. **Instance arguments.** In `deriveParameters`, build `p.<type>.ap` (N × 1) with `ctrl`, `gen`, and for the BESS `SOC0` and `kSOC = Pbase / (E/N)`.
 4. **Asset controllers.** Create `WT_ctrl.slx`, `PV_ctrl.slx`, `BESS_ctrl.slx`: fixed-step discrete, `FixedStep = Ts`, model workspace code that loads `Ts` and `par` from `HPP_parameters()`, model argument `par`; six `double` inports with `SampleTime = Ts` and three outports in the order of `modelInterfaces.m`. Add the blocks of B3.4 / B3.5 / B3.6: discrete first-order lags (`PoleZ = 1 − Ts/T`, voltage filter IC 1), voltage floor, dip comparison (plus `V > Vup` and OR for REEC), Saturation Dynamic for the P limits, Rate Limiter, P-order lag, division by the floored voltage; Q feed-forward, Q error, the two switches (Q loop on, freeze in dip), the discrete PI with clamping and ±`imax`/`Imax` limits, the dip-current path (deadband only for REEC), the `iqH1` or `Iqh1/Iql1` saturation, `Tiq` for REEC; the current-limitation MATLAB Function with `par` as a Parameter. Or run `buildHPP(All=true)` with the models missing to generate them from the templates.
 5. **Asset models.** Create `<type>_asset.slx`: fixed step `Tsim`, model workspace loading `ap` and `Tsim`, model argument `ap`; inports `P_set`, `Q_set`, `V_re`, `V_im` (+ availability for WT/PV); MATLAB Function `terminal` (|V|); Memory blocks on P and Q; Model block `ctrl` referencing the controller with `par = ap.ctrl`; the generator system (WT: `dipmax` rising only, `diqmax` ±; REGC_A: `Rrpwr` rising only, `Iqrmax`/`Iqrmin`, then LVPL/LVACM after the active-current lag); lags as Gain `1/(ap.gen.Tg)` + Integrator with feedback; MATLAB Function `generator` (current aligned with V, P = |V| i_p, Q = |V| i_q); for the BESS the Gain `-ap.kSOC` and Integrator with IC `ap.SOC0`; outports `P`, `Q`, `P_avail`, `I_re`, `I_im` (+ `SOC`).
-6. **Interface list.** Enter the ports and arguments in `utilities/modelInterfaces.m` and run `checkModels` (ports, tunable expressions, `par`/`ap` fields).
+6. **Interface list.** Enter the ports and arguments in `utilities/build/modelInterfaces.m` and run `checkModels` (ports, tunable expressions, `par`/`ap` fields).
 7. **Wiring in `HPP.slx`.** In `buildPlantSub`: one Model block per asset with `ap = p.<type>.ap(k)`; set-points from the plant controller through the plant→asset link (delay, gain plant/asset base); `V_re`/`V_im` from the network bus (one step old, Memory with IC 1 + j0 in the `Network` subsystem); a Step block (wind: 0.6 → 0.9 pu at 20 s) or Constant (PV: 0.4 pu) for the availability; asset `P`/`Q` terminated; `P_avail` and `SOC` muxed back to the plant controller (gain, memory, delay); `I_re`/`I_im` muxed and scaled by asset base / 180 MVA into the network.
 8. **Solver.** Top model fixed-step ode1, single-tasking, step `p.sim.Ts` = 1 ms; keep every time constant well above 1 ms.
 9. **Check.** Run the nominal case (steady state; asset Q loops settle to their set-points), `wt_frt` (dip 0.5: reactive current injection, P back within about 0.5 s after clearing) and `bess_soc` (no discharge at SOCmin, charging stops at SOCmax) and compare with the numbers in B3.8.
@@ -3166,13 +3166,13 @@ From design.md (stages 3–4, section 10) and from the code:
 
 **What.** There are three plant controllers: `models/ctrl/WPPC.slx` (wind), `SPPC.slx` (PV) and `BESSC.slx` (battery). Each one sits between the HPPC and the N asset controllers of its plant. It closes its own loops on its own measurement point, which is the plant's feeder into the 33 kV HPP busbar. Then it splits its P and Q orders over its N assets.
 
-All three are built from one template, `buildPlantCtrlRepc(name, folder)` in `utilities/buildHPP.m` (~line 2212). The structure follows the WECC second-generation plant controller **REPC_A**: a P path with frequency droop and a PI, and a Q path that either tracks a Q set-point or controls a voltage, also with a PI. BESSC has a few extra blocks for the state of charge (SOC). WPPC and SPPC have identical diagrams. Only their parameter values differ, and those come in through the model argument `par`.
+All three are built from one template, `buildPlantCtrlRepc(name, folder)` in `utilities/build/buildHPP.m` (~line 2212). The structure follows the WECC second-generation plant controller **REPC_A**: a P path with frequency droop and a PI, and a Q path that either tracks a Q set-point or controls a voltage, also with a PI. BESSC has a few extra blocks for the state of charge (SOC). WPPC and SPPC have identical diagrams. Only their parameter values differ, and those come in through the model argument `par`.
 
 **Why closed loops in the plant controllers.** The decision was made on 2026-11-16 (design.md section 8, stage 4, "Closed loops at every level"; memory note `phd-vendor-plant-controllers.md`). In real hybrid plants the vendors deliver the assets together with their own plant controller. That controller regulates P, Q/V and frequency at its own point and is a black box to the plant owner. The HPP controller then has to coordinate several closed-loop controllers that it cannot change. This brings cascade interaction, parallel voltage control and duplicated frequency response. Coordinating them is the problem the PhD project addresses. So the plant controllers are kept realistic and self-contained on purpose, and their interaction with the HPPC is not simplified away.
 
 **Alternatives considered.** The first option was an open-loop "splitter" plant controller: the stage-1 placeholder (`controllerSpecs` in `buildHPP.m`, ~line 150) only split the set-points by availability. It was dropped because the coordination problem would then not exist. The second option was the IEC 61400-27-1 WPP control model for the wind plant. It is postponed (design.md section 10: "the IEC 61400-27-1 WPP control model is a later refinement"), because it has the same functions as REPC_A, and one template for all three plants is simpler.
 
-**Consequences.** Each plant controller is a future DLL. Its ports are fixed by `utilities/modelInterfaces.m`, so a port change needs changes in `modelInterfaces.m`, in the build script's wiring and in the model, all together. The HPPC can only reach a plant through the plant's P and Q set-points. It sees the plant through the measurements and flags the plant controller sends back.
+**Consequences.** Each plant controller is a future DLL. Its ports are fixed by `utilities/build/modelInterfaces.m`, so a port change needs changes in `modelInterfaces.m`, in the build script's wiring and in the model, all together. The HPPC can only reach a plant through the plant's P and Q set-points. It sees the plant through the measurements and flags the plant controller sends back.
 
 ### B4.2 Sample time, per-unit base and model argument
 
@@ -3189,7 +3189,7 @@ The plant controller works in per unit on its own plant rating. The conversions 
 
 A discrete first-order lag is used for every filter: `lagBlk(sys, name, T, y0)` creates a "Transfer Fcn First Order" block with pole $p = 1 - T_s/T$, i.e. $y_k = p\,y_{k-1} + (1-p)\,u_k$. Note that with $T = T_s$ the pole is 0 and the "filter" passes its input unchanged. This is the case for the plant's `Tfltr` = `Tp` = 0.02 s at `Ts` = 0.02 s, so the plant measurement filters currently do nothing (inferred from the block formula; it is not commented anywhere). A filter constant below `Ts` would make the pole negative, so time constants must be at least `Ts`.
 
-### B4.3 Ports (from `utilities/modelInterfaces.m`)
+### B4.3 Ports (from `utilities/build/modelInterfaces.m`)
 
 | # | Input | Width | Unit | Source in `HPP.slx` (link) |
 |---|---|---|---|---|
@@ -3431,7 +3431,7 @@ These numbers are from stage 4, before the HPPC closed its loops. They remain va
 
 ### B5.1 Overview
 
-**What.** `models/ctrl/HPPC.slx` is the HPP controller. Its template is `buildHppcCtrl` in `utilities/buildHPP.m` (~line 1956) and its parameters are `p.hppc` (`params/hppcParameters.m`), copied and extended into `p.ctrl.hppc.par` by `controllerParameters.m`. It runs at `Ts` = 0.1 s, in per unit on the POC base `p.grid.Pbase` = 180 MW (= Pn of the plant at the POC). Frequency is in pu of 50 Hz.
+**What.** `models/ctrl/HPPC.slx` is the HPP controller. Its template is `buildHppcCtrl` in `utilities/build/buildHPP.m` (~line 1956) and its parameters are `p.hppc` (`params/hppcParameters.m`), copied and extended into `p.ctrl.hppc.par` by `controllerParameters.m`. It runs at `Ts` = 0.1 s, in per unit on the POC base `p.grid.Pbase` = 180 MW (= Pn of the plant at the POC). Frequency is in pu of 50 Hz.
 
 It has five function areas, each a section of the block diagram:
 
@@ -3863,7 +3863,7 @@ From `hppcParameters.m`, plus fields added by `controllerParameters.m`.
 
 This chapter covers the timing of the control hierarchy: the communication delay of each signal path, the controller sample rates, the one-step measurement memories and the algebraic-loop reason for them, the initial conditions of the delays, the fixed and variable delay implementations (the physical side; the run/compile side is chapter A5), and the measured effect of the delays.
 
-Sources: `params/commParameters.m`, `params/deriveParameters.m`, `params/controllerParameters.m`, `params/simulationParameters.m`, `utilities/buildHPP.m` (`makeLink` ~line 1313, `buildDelayVariant` ~line 1370, `buildHppcSub`, `buildPlantSub`, `buildNetwork`, `buildAsset`, `buildController`), `scripts/delayMode.m`, `scripts/+caseSets/comm_delay.m`, `docs/design.md` sections 6, 8 (stage 1) and 11, commits `41a0b4f`, `ae5559d`, `fb180ee`, `ac18a90`.
+Sources: `params/commParameters.m`, `params/deriveParameters.m`, `params/controllerParameters.m`, `params/simulationParameters.m`, `utilities/build/buildHPP.m` (`makeLink` ~line 1313, `buildDelayVariant` ~line 1370, `buildHppcSub`, `buildPlantSub`, `buildNetwork`, `buildAsset`, `buildController`), `scripts/delayMode.m`, `scripts/+caseSets/comm_delay.m`, `docs/design.md` sections 6, 8 (stage 1) and 11, commits `41a0b4f`, `ae5559d`, `fb180ee`, `ac18a90`.
 
 ### B6.1 Delay values per path
 
@@ -4216,7 +4216,7 @@ Found by reading the code against the docs (19 Nov 2026). None of these is fixed
 | `params/controllerParameters.m` | `Ppoc_max` "not used yet" | the HPPC export limit uses it |
 | `params/HPP_parameters.m` help | example `p.ctrl.Kp = 0.8` | that field no longer exists |
 | `params/simulationParameters.m` | refers to `p.ctrl.Ts` | each controller has its own `Ts` |
-| `utilities/buildHPP.m` comments | "one MATLAB Function block logic", "placeholder logic", "unless Force=true", old `makeLink` delay text, "constants for now" in `buildTSO` | stale; `controllerSpecs` / `buildController` are no longer called |
+| `utilities/build/buildHPP.m` comments | "one MATLAB Function block logic", "placeholder logic", "unless Force=true", old `makeLink` delay text, "constants for now" in `buildTSO` | stale; `controllerSpecs` / `buildController` are no longer called |
 | Simscape run time | ~40 s per run (guide), 107–127 s (design.md), "about 5×" (`networkCode.m`) | depends on case and load; one consistent figure should be measured |
 
 ### Behaviour worth checking or fixing

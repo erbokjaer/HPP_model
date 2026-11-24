@@ -1,0 +1,935 @@
+{
+  "blocks": [
+    {
+      "name": "fp",
+      "type": "Inport",
+      "pos": [
+        20,
+        163,
+        50,
+        177
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "f_sys",
+      "type": "Inport",
+      "pos": [
+        35,
+        373,
+        65,
+        387
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "F",
+      "type": "Sum",
+      "pos": [
+        255,
+        150,
+        285,
+        190
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "round",
+      "inputs": "+-+",
+      "tag": ""
+    },
+    {
+      "name": "F ÷ Navg",
+      "type": "Product",
+      "pos": [
+        455,
+        160,
+        490,
+        200
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "F[k-1]",
+      "type": "Delay",
+      "pos": [
+        290,
+        212,
+        335,
+        263
+      ],
+      "orient": "left",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Navg",
+      "type": "Constant",
+      "pos": [
+        85,
+        158,
+        140,
+        182
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Navg 2",
+      "type": "Constant",
+      "pos": [
+        385,
+        178,
+        440,
+        202
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Navg fp",
+      "type": "Gain",
+      "pos": [
+        180,
+        315,
+        230,
+        345
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Nroc",
+      "type": "Constant",
+      "pos": [
+        580,
+        353,
+        635,
+        377
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Nroc Ts",
+      "type": "Constant",
+      "pos": [
+        795,
+        268,
+        900,
+        292
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "PLL on?",
+      "type": "Switch",
+      "pos": [
+        585,
+        165,
+        625,
+        245
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "df",
+      "type": "Sum",
+      "pos": [
+        795,
+        195,
+        825,
+        235
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "rectangular",
+      "inputs": "+-",
+      "tag": ""
+    },
+    {
+      "name": "f0",
+      "type": "Gain",
+      "pos": [
+        855,
+        200,
+        905,
+        230
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "f[k-Nroc]",
+      "type": "Delay",
+      "pos": [
+        670,
+        340,
+        715,
+        390
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "fp[k-Navg]",
+      "type": "Delay",
+      "pos": [
+        185,
+        145,
+        230,
+        195
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "on",
+      "type": "Constant",
+      "pos": [
+        510,
+        193,
+        550,
+        217
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "÷ Nroc Ts",
+      "type": "Product",
+      "pos": [
+        940,
+        205,
+        975,
+        245
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "f",
+      "type": "Outport",
+      "pos": [
+        1010,
+        153,
+        1040,
+        167
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "RoCoF",
+      "type": "Outport",
+      "pos": [
+        1010,
+        218,
+        1040,
+        232
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    }
+  ],
+  "areas": [],
+  "trees": [
+    {
+      "src": "÷ Nroc Ts",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            980,
+            225
+          ],
+          [
+            1005,
+            225
+          ]
+        ],
+        "dst": "RoCoF",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Nroc Ts",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            905,
+            280
+          ],
+          [
+            920,
+            280
+          ],
+          [
+            920,
+            235
+          ],
+          [
+            935,
+            235
+          ]
+        ],
+        "dst": "÷ Nroc Ts",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "f0",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            910,
+            215
+          ],
+          [
+            935,
+            215
+          ]
+        ],
+        "dst": "÷ Nroc Ts",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "df",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            830,
+            215
+          ],
+          [
+            850,
+            215
+          ]
+        ],
+        "dst": "f0",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "f[k-Nroc]",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            720,
+            365
+          ],
+          [
+            755,
+            365
+          ],
+          [
+            755,
+            225
+          ],
+          [
+            790,
+            225
+          ]
+        ],
+        "dst": "df",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "Nroc",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            640,
+            365
+          ],
+          [
+            665,
+            365
+          ]
+        ],
+        "dst": "f[k-Nroc]",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "PLL on?",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              630,
+              205
+            ],
+            [
+              644,
+              205
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              644,
+              205
+            ],
+            [
+              644,
+              350
+            ],
+            [
+              665,
+              350
+            ]
+          ],
+          "dst": "f[k-Nroc]",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              644,
+              205
+            ],
+            [
+              790,
+              205
+            ]
+          ],
+          "dst": "df",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 4,
+          "parent": 1,
+          "points": [
+            [
+              644,
+              205
+            ],
+            [
+              644,
+              160
+            ],
+            [
+              1005,
+              160
+            ]
+          ],
+          "dst": "f",
+          "dt": "inport",
+          "dp": 1
+        }
+      ]
+    },
+    {
+      "src": "f_sys",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              70,
+              380
+            ],
+            [
+              532,
+              380
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              532,
+              380
+            ],
+            [
+              665,
+              380
+            ]
+          ],
+          "dst": "f[k-Nroc]",
+          "dt": "inport",
+          "dp": 3
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              532,
+              380
+            ],
+            [
+              532,
+              230
+            ],
+            [
+              580,
+              230
+            ]
+          ],
+          "dst": "PLL on?",
+          "dt": "inport",
+          "dp": 3
+        }
+      ]
+    },
+    {
+      "src": "on",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            555,
+            205
+          ],
+          [
+            580,
+            205
+          ]
+        ],
+        "dst": "PLL on?",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "F ÷ Navg",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            495,
+            180
+          ],
+          [
+            580,
+            180
+          ]
+        ],
+        "dst": "PLL on?",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Navg 2",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            445,
+            190
+          ],
+          [
+            450,
+            190
+          ]
+        ],
+        "dst": "F ÷ Navg",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "Navg fp",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            235,
+            330
+          ],
+          [
+            350,
+            330
+          ],
+          [
+            350,
+            250
+          ],
+          [
+            340,
+            250
+          ]
+        ],
+        "dst": "F[k-1]",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "F[k-1]",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            285,
+            240
+          ],
+          [
+            270,
+            240
+          ],
+          [
+            270,
+            195
+          ]
+        ],
+        "dst": "F",
+        "dt": "inport",
+        "dp": 3
+      }
+    },
+    {
+      "src": "F",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              290,
+              170
+            ],
+            [
+              350,
+              170
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              350,
+              170
+            ],
+            [
+              450,
+              170
+            ]
+          ],
+          "dst": "F ÷ Navg",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              350,
+              170
+            ],
+            [
+              350,
+              225
+            ],
+            [
+              340,
+              225
+            ]
+          ],
+          "dst": "F[k-1]",
+          "dt": "inport",
+          "dp": 1
+        }
+      ]
+    },
+    {
+      "src": "fp[k-Navg]",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            235,
+            170
+          ],
+          [
+            250,
+            170
+          ]
+        ],
+        "dst": "F",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "Navg",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            145,
+            170
+          ],
+          [
+            180,
+            170
+          ]
+        ],
+        "dst": "fp[k-Navg]",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "fp",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              55,
+              170
+            ],
+            [
+              55,
+              170
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              55,
+              170
+            ],
+            [
+              55,
+              185
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 3,
+          "parent": 2,
+          "points": [
+            [
+              55,
+              185
+            ],
+            [
+              180,
+              185
+            ]
+          ],
+          "dst": "fp[k-Navg]",
+          "dt": "inport",
+          "dp": 3
+        },
+        {
+          "id": 4,
+          "parent": 2,
+          "points": [
+            [
+              55,
+              185
+            ],
+            [
+              55,
+              330
+            ],
+            [
+              175,
+              330
+            ]
+          ],
+          "dst": "Navg fp",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 5,
+          "parent": 1,
+          "points": [
+            [
+              55,
+              170
+            ],
+            [
+              55,
+              155
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 6,
+          "parent": 5,
+          "points": [
+            [
+              55,
+              155
+            ],
+            [
+              55,
+              121
+            ],
+            [
+              270,
+              121
+            ],
+            [
+              270,
+              145
+            ]
+          ],
+          "dst": "F",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 7,
+          "parent": 5,
+          "points": [
+            [
+              55,
+              155
+            ],
+            [
+              180,
+              155
+            ]
+          ],
+          "dst": "fp[k-Navg]",
+          "dt": "inport",
+          "dp": 1
+        }
+      ]
+    }
+  ],
+  "system": "FreqMeter/f average, RoCoF"
+}

@@ -31,22 +31,12 @@ function T = summarizeResults(source, caseId, opts)
     names = strings(1, 0);
     data = zeros(n, 0);
     for sig = opts.Signals
-        if startsWith(sig, ["P_", "Q_"])      % W -> MW, var -> Mvar
-            scale = 1e-6;
-        else
-            scale = 1;
-        end
         vals = NaN(n, 3);
         for k = 1:n
             if ~isempty(out(k).ErrorMessage)
                 continue
             end
-            logged = string(out(k).yout.getElementNames);
-            if ~ismember(sig, logged)
-                error("summarizeResults:noSignal", "Signal ""%s"" is not logged. Logged signals: %s", ...
-                      sig, strjoin(logged, ", "));
-            end
-            d = squeeze(out(k).yout.get(char(sig)).Values.Data) * scale;
+            [~, d] = resultSignal(out(k), sig, true);   % in the units of signalUnit
             vals(k, :) = [d(end), min(d), max(d)];
         end
         names = [names, sig + ["_final", "_min", "_max"]]; %#ok<AGROW>

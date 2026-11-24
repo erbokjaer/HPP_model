@@ -17,7 +17,7 @@ function plan = buildfile
     plan.DefaultTasks = "rapid";
 
     plan("model").Dependencies = "check";
-    plan("model").Inputs = ["params/*.m", "utilities/buildHPP.m", "utilities/modelInterfaces.m", ...
+    plan("model").Inputs = ["params/*.m", "utilities/build/**/*.m", ...
                             "models/ctrl/*.slx", "models/assets/*.slx"];
     plan("model").Outputs = "models/HPP.slx";
 
