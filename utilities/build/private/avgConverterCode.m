@@ -1,0 +1,62 @@
+function body = avgConverterCode()
+    % body of the MATLAB Function "averaged converter" (buildAsset, choice
+    % Averaged of the Current injection; equations and parameters in
+    % params/converterParameters.m, derived values in deriveParameters).
+    % function [I_re, I_im, Vdc] = avg_converter(ip, iq, th, V_re, V_im, ap)
+    % Called once per model step: ap.conv.n sub-steps of ap.conv.h with the
+    % terminal voltage vg and the PLL angle th held; returns the grid-side
+    % current i2 at the end of the step and the DC voltage.
+    body = [
+        "c = ap.conv;"
+        "persistent x xi xdc w ps"
+        "if c.type < 1.5                        % current source selected: nothing to do"
+        "    I_re = 0;  I_im = 0;  Vdc = c.Vdc0;"
+        "    return"
+        "end"
+        "vg = complex(V_re, V_im);"
+        "e  = complex(cos(th), sin(th));        % PLL frame -> common frame"
+        "ec = conj(e);"
+        "i2r = complex(ip, -iq);                % grid current reference, PLL frame"
+        "pstar = real(vg * conj(i2r * e));      % commanded power (source behind the DC link)"
+        "if isempty(x)"
+        "    % start in steady state at the first terminal voltage"
+        "    i2 = i2r * e;"
+        "    vC = vg + complex(c.R2, c.L2) * i2;"
+        "    i1 = i2 + 1j * c.Cf * vC;"
+        "    x  = [i1; vC; i2];"
+        "    xi = c.R1 * i1 * ec;"
+        "    xdc = 0;  w = c.Vdc0^2;  ps = pstar;"
+        "end"
+        "Ad = complex(c.AdRe, c.AdIm);  Bd = complex(c.BdRe, c.BdIm);"
+        "w0ref = c.Vdc0^2;"
+        "for k = 1:c.n"
+        "    i1 = x(1);  vn = x(2) + c.RdUsed * (x(1) - x(3));"
+        "    i1d = i1 * ec;  vnd = vn * ec;      % PLL frame"
+        "    % DC voltage loop (PI on Vdc^2): extra active current"
+        "    err = w - w0ref;"
+        "    dP = c.kpDC * err + xdc;"
+        "    % current reference: grid current + DC correction + capacitor current"
+        "    i1r = i2r + dP / max(abs(vnd), 0.1) + 1j * c.Cf * vnd;"
+        "    m = abs(i1r);  lim = m > c.Imax;"
+        "    if lim, i1r = i1r * (c.Imax / m); end   % angle-preserving limit"
+        "    if ~lim, xdc = xdc + c.kiDC * c.h * err; end"
+        "    % current PI with decoupling and feed-forward of vn"
+        "    ei = i1r - i1d;"
+        "    v = vnd + 1j * c.L1 * i1d + c.kp * ei + xi;"
+        "    vmax = c.mMax * sqrt(max(w, 0));"
+        "    if abs(v) > vmax"
+        "        v = v * (vmax / abs(v));         % modulation limit, no integration"
+        "    else"
+        "        xi = xi + c.ki * c.h * ei;"
+        "    end"
+        "    vc = v * e;"
+        "    % DC link: source power through a lag, converter power out; chopper"
+        "    pc = real(vc * conj(i1));"
+        "    ps = ps + (c.h / c.Tsrc) * (pstar - ps);"
+        "    w = min(max(w + c.h * (ps - pc) / c.Hdc, 0.01), c.Vchop^2);"
+        "    % LCL filter, exact over the sub-step"
+        "    x = Ad * x + Bd * [vc; vg];"
+        "end"
+        "I_re = real(x(3));  I_im = imag(x(3));"
+        "Vdc = sqrt(w);"];
+end

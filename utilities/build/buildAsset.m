@@ -59,9 +59,14 @@ function buildAsset(type, folder)
     % outputs:
     %  - generator system (WT, IEC 61400-27-1) / converter (PV, BESS, WECC
     %    REGC_A): the current dynamics, ip_cmd, iq_cmd -> ip, iq;
-    %  - current injection: a current source along the PLL angle th_pll,
-    %    I = (ip - j iq) e^(j th), with c = cos th, s = sin th
+    %  - current injection, the converter model chosen per run by the
+    %    tunable ap.conv.type (converterParameters):
+    %    Current source (1, RMS, default): a current source along the PLL
+    %    angle th_pll, I = (ip - j iq) e^(j th), with c = cos th, s = sin th
     %      I_re = ip c + iq s,  I_im = ip s - iq c;
+    %    Averaged (2): averaged converter with inner dq current loop, LCL
+    %    filter and DC link tracking the same current; the network sees its
+    %    grid-side current (needs the terminal voltage V_re, V_im);
     %  - PQ measurement: P + jQ = V conj(I) (+ = export / capacitive)
     %      P = V_re I_re + V_im I_im,  Q = V_im I_re - V_re I_im
     %    (with an ideal PLL, th = angle of V: P = |V| ip, Q = |V| iq).
@@ -69,12 +74,12 @@ function buildAsset(type, folder)
     gs = mdl + "/" + gName;
     add_block("built-in/Subsystem", gs, "Position", [0 0 120 90]);
     ij = mdl + "/Current injection";
-    add_block("built-in/Subsystem", ij, "Position", [0 0 120 90]);
+    cs = currentInjectionBlock(ij);
     pq = mdl + "/PQ measurement";
     add_block("built-in/Subsystem", pq, "Position", [0 0 120 120]);
-    nb(ij, "trig", "cos", "Operator", "cos");  nb(ij, "trig", "sin", "Operator", "sin");
-    for nm = ["ip c", "iq s", "ip s", "iq c"], nb(ij, "prod", nm); end
-    nb(ij, "sum", "I_re sum", "Inputs", "++");  nb(ij, "sum", "I_im sum", "Inputs", "+-");
+    nb(cs, "trig", "cos", "Operator", "cos");  nb(cs, "trig", "sin", "Operator", "sin");
+    for nm = ["ip c", "iq s", "ip s", "iq c"], nb(cs, "prod", nm); end
+    nb(cs, "sum", "I_re sum", "Inputs", "++");  nb(cs, "sum", "I_im sum", "Inputs", "+-");
     for nm = ["V_re I_re", "V_im I_im", "V_im I_re", "V_re I_im"], nb(pq, "prod", nm); end
     nb(pq, "sum", "P sum", "Inputs", "++");     nb(pq, "sum", "Q sum", "Inputs", "+-");
     if type == "WT"
@@ -137,10 +142,12 @@ function buildAsset(type, folder)
     fillBlock(gs, gin, ["ip", "iq"], rowsG, gTitle, cm);
     layoutConverter(gs, type == "WT", gTitle);
     % (pairBlock: the hand layout of pairs of products into round sums)
-    pairBlock(ij, ["ip", "iq", "th_pll"], ["I_re", "I_im"], {"th_pll", "cos", "c"; "th_pll", "sin", "s"}, ...
+    pairBlock(cs, ["ip", "iq", "th_pll"], ["I_re", "I_im"], {"th_pll", "cos", "c"; "th_pll", "sin", "s"}, ...
         {"ip c", "ip", "c", "iq s", "iq", "s", "I_re sum", "+", "I_re"
          "ip s", "ip", "s", "iq c", "iq", "c", "I_im sum", "-", "I_im"}, ...
         "Current injection along the PLL angle: I = (ip - j iq) e^(j th)", cm);
+    averagedConverter(ij + "/Averaged", cm);
+    wireCurrentInjection(ij);
     pairBlock(pq, ["I_re", "I_im", "V_re", "V_im"], ["P", "Q"], {}, ...
         {"V_re I_re", "V_re", "I_re", "V_im I_im", "V_im", "I_im", "P sum", "+", "P"
          "V_im I_re", "V_im", "I_re", "V_re I_im", "V_re", "I_im", "Q sum", "-", "Q"}, ...
@@ -149,7 +156,7 @@ function buildAsset(type, folder)
     sG = {2, "@iq_cmd"};
     if type ~= "WT", sG(end+1, :) = {3, "@V_term"}; end
     rowsGB = {[stg("@ip_cmd", 0), stg(gName, 1, sG, {2, "iq"}), ...
-               stg("Current injection", 1, {2, "@iq"; 3, "@th_pll"}, {1, "I_re"; 2, "I_im"}), ...
+               stg("Current injection", 1, {2, "@iq"; 3, "@th_pll"; 4, "@V_re"; 5, "@V_im"}, {1, "I_re"; 2, "I_im"}), ...
                stg("PQ measurement", 1, {2, "@I_im"; 3, "@V_re"; 4, "@V_im"}, {2, "Q"}), stg(">P")]};
     [y, h3, r3] = ctrlSection(mdl, gTitle, rowsGB, x, y, cm, areaColor("asset"));
     hMid = [h1 h2 h3];  rMax = max([r1 r2 r3]);
@@ -193,6 +200,100 @@ function buildAsset(type, folder)
     save_system(mdl, fullfile(folder, mdl + ".slx"));
     close_system(mdl);
     registerInProject(fullfile(folder, mdl + ".slx"));
+end
+
+function cs = currentInjectionBlock(ij)
+    % the Current injection: both converter models side by side and a
+    % Switch per output on the tunable ap.conv.type (1 Current source,
+    % 2 Averaged). Ports in 1 ip 2 iq 3 th_pll 4 V_re 5 V_im, out 1 I_re
+    % 2 I_im. Not a Variant Subsystem: a referenced model with an update
+    % diagram (or startup) variant built for Rapid Accelerator only with
+    % the choice that was active when the model was saved ("computed
+    % interface information must match saved interface information"), so
+    % switching per run would need the asset models resaved. With the
+    % switch both are compiled, the choice needs no rebuild (also in Fast
+    % Restart), and the averaged converter returns at once when not
+    % selected. Returns the Current source block (filled by pairBlock).
+    add_block("built-in/Subsystem", ij, "Position", [0 0 120 130]);
+    ins = ["ip", "iq", "th_pll", "V_re", "V_im"];
+    for k = 1:numel(ins)
+        add_block("simulink/Sources/In1", ij + "/" + ins(k), "Port", num2str(k), "Position", [40, 40 * k + 20, 70, 40 * k + 34]);
+    end
+    cs = ij + "/Current source";
+    add_block("built-in/Subsystem", cs, "Position", [200 40 360 130]);
+    add_block("built-in/Subsystem", ij + "/Averaged", "Position", [200 180 360 300]);
+    add_block("simulink/Sources/Constant", ij + "/converter model", "Value", "ap.conv.type", ...
+        "Position", [420 150 490 170]);
+    outs = ["I_re", "I_im"];
+    for k = 1:2
+        sw = outs(k) + " model?";
+        add_block("simulink/Signal Routing/Switch", ij + "/" + sw, "Criteria", "u2 > Threshold", "Threshold", "1.5", ...
+            "Position", [560, 60 + 120 * (k - 1), 590, 150 + 120 * (k - 1)]);
+        add_block("simulink/Sinks/Out1", ij + "/" + outs(k), "Port", num2str(k), ...
+            "Position", [650, 98 + 120 * (k - 1), 680, 112 + 120 * (k - 1)]);
+        add_line(ij, sw + "/1", outs(k) + "/1");
+        add_line(ij, "converter model/1", sw + "/2", "autorouting", "on");
+    end
+    set_param(ij, "BackgroundColor", areaColor("asset"), "Description", ...
+        "Converter model, chosen per run by p.conv.type: Current source (1, RMS: I = (ip - j iq) e^(j th_pll)) " + ...
+        "or Averaged (2: inner dq current loop, LCL filter, DC link; params/converterParameters.m).");
+end
+
+function wireCurrentInjection(ij)
+    % after both blocks are filled: inputs into them, their outputs into
+    % the switches (u1 Averaged, u3 Current source)
+    ins = ["ip", "iq", "th_pll", "V_re", "V_im"];
+    for k = 1:5
+        add_line(ij, ins(k) + "/1", "Averaged/" + k, "autorouting", "on");
+        if k <= 3, add_line(ij, ins(k) + "/1", "Current source/" + k, "autorouting", "on"); end
+    end
+    outs = ["I_re", "I_im"];
+    for k = 1:2
+        add_line(ij, "Averaged/" + k, outs(k) + " model?/1", "autorouting", "on");
+        add_line(ij, "Current source/" + k, outs(k) + " model?/3", "autorouting", "on");
+    end
+end
+
+function averagedConverter(sub, cm)
+    % Averaged block of the Current injection: one MATLAB Function in an
+    % atomic subsystem at the model step Tsim, with ap.conv.n sub-steps
+    % (avgConverterCode); the DC voltage Vdc ends in a terminator (not an
+    % asset output)
+    [hI, x] = ctrlInputs(sub, ["ip", "iq", "th_pll", "V_re", "V_im"], repmat("1", 1, 5), cm, "-1");
+    fb = sub + "/averaged converter";
+    addMatlabFunction(fb, "avg_converter", ["ip", "iq", "th", "V_re", "V_im"], ["I_re", "I_im", "Vdc"], ...
+        avgConverterCode(), "ap", [x + 260, 60, x + 420, 260]);
+    tags = ["ip", "iq", "th_pll", "V_re", "V_im"];
+    for k = 1:5
+        f = addFrom(sub, tags(k), tagColor(cm, tags(k)));
+        placeLeft(sub, f, fb, k, 60);
+        add_line(sub, f + "/1", "averaged converter/" + k);
+    end
+    add_block("simulink/Sinks/Terminator", sub + "/Vdc term");
+    q = get_param(fb, "PortHandles");  po = get_param(q.Outport(3), "Position");
+    set_param(sub + "/Vdc term", "Position", [po(1) + 60, po(2) - 10, po(1) + 80, po(2) + 10]);
+    hL = add_line(sub, "averaged converter/3", "Vdc term/1");
+    set_param(hL, "Name", "Vdc");
+    outs = ["I_re", "I_im"];
+    for k = 1:2
+        g = addGoto(sub, outs(k), tagColor(cm, outs(k)));
+        p = get_param(sub + "/" + g, "Position");  w = p(3) - p(1);  h = p(4) - p(2);
+        po = get_param(q.Outport(k), "Position");
+        set_param(sub + "/" + g, "Position", [po(1) + 60, po(2) - h / 2, po(1) + 60 + w, po(2) + h / 2]);
+        add_line(sub, "averaged converter/" + k, g + "/1");
+    end
+    blks = [string(get_param(find_system(sub, "SearchDepth", 1, "BlockType", "From"), "Name"))', ...
+        "averaged converter", "Vdc term", "I_re goto", "I_im goto"];
+    h = areaAround(sub, "Averaged converter (inner current loop, LCL filter, DC link)", blks, areaColor("asset"));
+    r = max(cell2mat(arrayfun(@(b) get_param(sub + "/" + b, "Position"), blks', "UniformOutput", false)) * [0; 0; 1; 0]);
+    hO = ctrlOutputs(sub, outs, "@" + outs, r + 110, cm);
+    alignColumns(hI, h, hO);
+    % atomic at the model step: the MATLAB Function keeps discrete states
+    % (persistent) and must not inherit the continuous rate of ip, iq
+    set_param(sub, "TreatAsAtomicUnit", "on", "SystemSampleTime", "Tsim");
+    set_param(sub, "BackgroundColor", areaColor("asset"), "Description", ...
+        "Averaged converter: inner dq current loop in the PLL frame, LCL filter, DC link, " + ...
+        "angle-preserving current limit (params/converterParameters.m)");
 end
 
 function layoutConverter(gs, isWT, title)
@@ -362,7 +463,8 @@ function fillBlock(sub, ins, outs, rows, title, cm)
 end
 
 function contLag(sys, name, T)
-    % continuous first-order lag 1/(T s + 1), initial output 0, built as
+    % continuous first-order lag 1/(T s + 1), initial output 0 (bypassed
+    % with the averaged converter, see below), built as
     % err -> gain 1/T -> integrator with feedback: the same as a Transfer Fcn
     % block, but its parameter "1/(T)" stays tunable in generated code (a
     % Transfer Fcn denominator "[T 1]" does not: vector concatenation)
@@ -373,9 +475,19 @@ function contLag(sys, name, T)
         "Position", [90 35 115 65]);
     add_block("simulink/Math Operations/Gain", blk + "/gain", "Gain", "1/(" + T + ")", "Position", [145 35 205 65]);
     add_block("simulink/Continuous/Integrator", blk + "/state", "Position", [235 35 265 65]);
-    add_block("built-in/Outport", blk + "/y", "Position", [300 43 330 57]);
+    add_block("built-in/Outport", blk + "/y", "Position", [520 43 550 57]);
+    % y = x (the lag) or u (bypass) by a Switch on the tunable
+    % ap.conv.type: bypassed with the averaged converter (2), which models
+    % the inner current loop explicitly; Tg is its RMS stand-in and counted
+    % twice would add a 20 ms lag
+    add_block("simulink/Sources/Constant", blk + "/converter model", "Value", "ap.conv.type", "Position", [280 95 350 115]);
+    add_block("simulink/Signal Routing/Switch", blk + "/bypass?", "Criteria", "u2 > Threshold", "Threshold", "1.5", ...
+        "Position", [430 30 460 120]);
     add_line(blk, "u/1", "err/1");  add_line(blk, "err/1", "gain/1");
-    add_line(blk, "gain/1", "state/1");  add_line(blk, "state/1", "y/1");
+    add_line(blk, "gain/1", "state/1");  add_line(blk, "state/1", "bypass?/3");
+    add_line(blk, "u/1", "bypass?/1", "autorouting", "on");  add_line(blk, "converter model/1", "bypass?/2");
+    add_line(blk, "bypass?/1", "y/1");
     add_line(blk, "state/1", "err/2", "autorouting", "on");
-    set_param(blk, "Mask", "on", "MaskDisplay", "disp('1 / (Tg s + 1)')", "MaskIconOpaque", "off");
+    set_param(blk, "Mask", "on", "MaskDisplay", "disp('1 / (Tg s + 1)')", "MaskIconOpaque", "off", ...
+        "Description", "first-order lag Tg; bypassed with the averaged converter (ap.conv.type = 2)");
 end
