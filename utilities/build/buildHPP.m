@@ -12,8 +12,8 @@ function buildHPP(opts)
 %                                 names or "<type>_asset"; without Only: all)
 %   buildHPP(..., Strict=true)    stop if checkModels finds a problem in the
 %                                 controller / asset models (default: warn)
-%   Progress: one step per model (waitbar in the desktop, one line per
-%   model with matlab -batch), with an estimate of the time left.
+%   Progress: one line per model in the Command Window, with an estimate
+%   of the time left.
 %   Force=true (older option) only works together with Overwrite=true.
 %
 %   Ownership: HPP.slx is always generated (its structure depends on N), so

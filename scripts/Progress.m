@@ -1,23 +1,23 @@
 classdef Progress < handle
-%PROGRESS  Progress of the long jobs: building the models, the Rapid
-%   Accelerator target, the runs of a case set.
+%PROGRESS  Progress of the long jobs in the Command Window: building the
+%   models, the Rapid Accelerator target, the runs of a case set.
 %
-%   pr = Progress("Building the HPP models", n)   a job of n steps
-%   pr = Progress("Rapid Accelerator build", 0)   one step of unknown length
-%   pr.step("WT_ctrl")                            the next step starts
-%   pr.done()                                     the job is finished
+%   pr = Progress("Building 13 HPP model(s)", n)   a job of n steps
+%   pr = Progress("Rapid Accelerator build", 0)    one step of unknown length
+%   pr.step("WT_ctrl")                             the next step starts
+%   pr.done()                                      the job is finished
 %
-%   In the MATLAB desktop a waitbar shows the step, the share done, the
-%   elapsed time and an estimate of the time left; without the desktop
-%   (matlab -batch) each step is one line in the Command Window. The
-%   estimate comes from the steps done so far, or, before the first step
-%   is done (and for a job of one step, such as the Rapid Accelerator
-%   build), from the duration of the same job last time. Durations are kept
-%   per job title in the Simulink cache folder (hpp_progress.mat).
+%   Each step is one line: a bar of the share done, the step, the elapsed
+%   time and an estimate of the time left. The estimate comes from the
+%   steps done so far, or, before the first step is done (and for a job of
+%   one step, such as the Rapid Accelerator build), from the duration of the
+%   same job last time. Durations are kept per job title in the Simulink
+%   cache folder (hpp_progress.mat).
 %
 %   Simulink has no progress callback during compilation and code
-%   generation, so a single build step cannot move a bar on its own;
-%   rapidTarget(..., Verbose=true) prints the build's own log as well.
+%   generation; during the Rapid Accelerator build it prints a line per
+%   referenced model itself ("###"), and rapidTarget(..., Verbose=true)
+%   prints its full build log.
 
     properties (SetAccess = private)
         Title (1,1) string
@@ -27,7 +27,6 @@ classdef Progress < handle
     end
     properties (Access = private)
         T0
-        Bar = []
     end
 
     methods
@@ -36,13 +35,7 @@ classdef Progress < handle
             obj.Last = Progress.lastDuration(obj.Title);
             msg = obj.Title;
             if ~isnan(obj.Last), msg = msg + " (last time " + Progress.fmt(obj.Last) + ")"; end
-            if Progress.gui()
-                obj.Bar = waitbar(0, char(msg), "Name", "HPP model");
-                set(findall(obj.Bar, "Type", "text"), "Interpreter", "none");   % names with _ as typed
-                drawnow;
-            else
-                fprintf("%s\n", msg);
-            end
+            fprintf("%s\n", msg);
         end
 
         function step(obj, label)
@@ -62,40 +55,18 @@ classdef Progress < handle
                 info = Progress.fmt(el) + " elapsed";
             end
             if ~isnan(left) && left > 0, info = info + ", about " + Progress.fmt(left) + " left"; end
-            if ~isempty(obj.Bar) && isvalid(obj.Bar)
-                % waitbar's text takes character vectors, not strings
-                waitbar(frac, obj.Bar, {char(obj.Title + ": " + string(label)), char(info)});
-                drawnow;
-            else
-                fprintf("  [%s] %s (%s)\n", Progress.barText(frac), string(label), info);
-            end
+            fprintf("  [%s] %s (%s)\n", Progress.barText(frac), string(label), info);
         end
 
         function done(obj)
-            % finished: close the bar, keep the duration for next time
+            % finished: keep the duration for next time
             el = toc(obj.T0);
             Progress.saveDuration(obj.Title, el);
-            obj.closeBar();
             fprintf("%s: done in %s\n", obj.Title, Progress.fmt(el));
-        end
-
-        function delete(obj)
-            obj.closeBar();                               % also when the job stops with an error
-        end
-    end
-
-    methods (Access = private)
-        function closeBar(obj)
-            if ~isempty(obj.Bar) && isvalid(obj.Bar), delete(obj.Bar); end
-            obj.Bar = [];
         end
     end
 
     methods (Static, Access = private)
-        function tf = gui()
-            tf = usejava("desktop") && feature("ShowFigureWindows");
-        end
-
         function s = fmt(t)
             t = max(round(t), 0);
             if t >= 3600
