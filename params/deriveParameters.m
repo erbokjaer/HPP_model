@@ -11,6 +11,7 @@ function p = deriveParameters(p)
 %                          p.<type>.ap(k) to asset instance k
 %     p.pll.asset, .hppc, .wppc, .sppc, .bessc   PLL gains kp, ki and
 %                          window lengths in steps
+%     p.conv               converter gains, filter discretization (converterGains)
 
     for t = ["wt", "pv", "bess"]
         p.(t).N      = p.(t).nFeeders * p.(t).nPerFeeder;
@@ -59,18 +60,50 @@ function p = deriveParameters(p)
         p.ctrl.(t).par.pll.Ts = p.ctrl.(t).Ts;     % the PLL runs at the controller's rate
     end
 
+    % converter part of the assets (converterParameters): gains and the
+    % discretized LCL filter, at the model step
+    p.conv = converterGains(p.conv, p.sim.Ts);
+
     % Asset model arguments, one per instance (identical for now)
-    p.wt.ap = repmat(struct("ctrl", p.ctrl.wt.par, "gen", p.wt.iec.gen), p.wt.N, 1);
-    p.pv.ap = repmat(struct("ctrl", p.ctrl.pv.par, "gen", p.pv.wecc.gen), p.pv.N, 1);
+    p.wt.ap = repmat(struct("ctrl", p.ctrl.wt.par, "gen", p.wt.iec.gen, "conv", p.conv), p.wt.N, 1);
+    p.pv.ap = repmat(struct("ctrl", p.ctrl.pv.par, "gen", p.pv.wecc.gen, "conv", p.conv), p.pv.N, 1);
 
     Eunit = p.bess.E / p.bess.N;                       % [J] per instance
     p.bess.ap = repmat(struct( ...
         "ctrl", p.ctrl.bess.par, ...
         "gen", p.bess.wecc.gen, ...
+        "conv", p.conv, ...
         "SOC0", p.bess.SOC0, ...
         "kSOC", p.ctrl.bess.Pbase / Eunit), ...        % [1/s] dSOC/dt per pu power
         p.bess.N, 1);
 
     % Network solver data (Z matrix etc.), depends on N and ratings
     p.net.solver = networkSolverData(p);
+end
+
+function c = converterGains(c, Ts)
+    % derived values of the averaged converter (converterParameters):
+    % sub-steps, PI gains of the current and DC voltage loops, damping
+    % resistor, and the LCL filter as x[k+1] = Ad x[k] + Bd [vc; vg] with
+    % x = [i1; vC; i2] (exact zero-order hold over one sub-step, in the
+    % frame at w0), stored as real and imaginary parts
+    w0 = 2 * pi * 50;
+    c.n = max(1, round(Ts / c.Tfast));
+    c.h = Ts / c.n;
+    c.fres = 50 * sqrt((c.L1 + c.L2) / (c.L1 * c.L2 * c.Cf));
+    if isnan(c.Rd), c.RdUsed = 1 / (3 * (c.fres / 50) * c.Cf); else, c.RdUsed = c.Rd; end
+    aC = 2 * pi * c.fBW;
+    c.kp = aC * c.L1 / w0;
+    c.ki = aC * c.R1;
+    wDC = 2 * pi * c.fDC;
+    c.kpDC = 2 * c.zDC * wDC * c.Hdc;
+    c.kiDC = wDC^2 * c.Hdc;
+    Rd = c.RdUsed;
+    A = [-w0 * (c.R1 + Rd) / c.L1 - 1j * w0,  -w0 / c.L1,   w0 * Rd / c.L1
+          w0 / c.Cf,                          -1j * w0,     -w0 / c.Cf
+          w0 * Rd / c.L2,                      w0 / c.L2,   -w0 * (c.R2 + Rd) / c.L2 - 1j * w0];
+    B = [w0 / c.L1, 0;  0, 0;  0, -w0 / c.L2];
+    M = expm([A, B; zeros(2, 5)] * c.h);
+    c.AdRe = real(M(1:3, 1:3));  c.AdIm = imag(M(1:3, 1:3));
+    c.BdRe = real(M(1:3, 4:5));  c.BdIm = imag(M(1:3, 4:5));
 end
