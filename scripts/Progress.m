@@ -37,7 +37,8 @@ classdef Progress < handle
             msg = obj.Title;
             if ~isnan(obj.Last), msg = msg + " (last time " + Progress.fmt(obj.Last) + ")"; end
             if Progress.gui()
-                obj.Bar = waitbar(0, msg, "Name", "HPP model");
+                obj.Bar = waitbar(0, char(msg), "Name", "HPP model");
+                set(findall(obj.Bar, "Type", "text"), "Interpreter", "none");   % names with _ as typed
                 drawnow;
             else
                 fprintf("%s\n", msg);
@@ -62,7 +63,8 @@ classdef Progress < handle
             end
             if ~isnan(left) && left > 0, info = info + ", about " + Progress.fmt(left) + " left"; end
             if ~isempty(obj.Bar) && isvalid(obj.Bar)
-                waitbar(frac, obj.Bar, {obj.Title + ": " + string(label), info});
+                % waitbar's text takes character vectors, not strings
+                waitbar(frac, obj.Bar, {char(obj.Title + ": " + string(label)), char(info)});
                 drawnow;
             else
                 fprintf("  [%s] %s (%s)\n", Progress.barText(frac), string(label), info);
