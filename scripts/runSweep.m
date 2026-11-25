@@ -43,6 +43,22 @@ function out = runSweep(setName, opts)
 %                                                 fixed. Default p.comm.delays
 %                                                 ("auto"), see commParameters.
 %
+%   out = runSweep(..., Window=[1 Inf])           event window: every case
+%                                                 starts 1 s before the set's
+%                                                 earliest event from a saved
+%                                                 operating point and runs to
+%                                                 its stop time ([pre post]:
+%                                                 stop post s after the
+%                                                 event). Cases that differ
+%                                                 only in the event share one
+%                                                 operating point; all are
+%                                                 cached per build and
+%                                                 pre-event condition
+%                                                 (operatingPoints,
+%                                                 eventWindow). Event times
+%                                                 stay absolute; the results
+%                                                 start at the window start.
+%
 %   out(k) is the output of case k. Results go to results/<setName>/sweep.mat
 %   with out, cases and setName. listCaseSets() shows the available sets.
 %
@@ -63,6 +79,7 @@ function out = runSweep(setName, opts)
         opts.FastRestart (1,1) logical = false
         opts.Mode (1,1) string {mustBeMember(opts.Mode, ["normal", "rapid"])} = "normal"
         opts.Delays (1,1) string {mustBeMember(opts.Delays, ["", "auto", "fixed", "variable"])} = ""
+        opts.Window double {mustBeWindow} = []
     end
     rapid = opts.Mode == "rapid";
     if rapid && opts.FastRestart
@@ -79,6 +96,11 @@ function out = runSweep(setName, opts)
         checkTunable(cases, setName, fixedDelays);
     end
     checkModelBuild(pBase);
+    win = [];
+    if ~isempty(opts.Window)
+        win = eventWindow(cases, pBase, opts.Window);
+        fprintf("[%s] event window: operating point at %g s (event at %g s)\n", setName, win.tOp, win.tEvent);
+    end
 
     in(height(cases)) = Simulink.SimulationInput("HPP");      % normal mode
     inR = in;                                                  % Rapid Accelerator
@@ -105,6 +127,7 @@ function out = runSweep(setName, opts)
         if opts.UseParallel
             st = rapidTarget(ps{1});                           % one target for all cases (checkTunable)
             if st.ok
+                inR = withWindow(inR, ps, win, "rapid", false);
                 out = parsim(inR, "ShowProgress", "on", "TransferBaseWorkspaceVariables", "off");
             else
                 k0 = 1;
@@ -118,6 +141,7 @@ function out = runSweep(setName, opts)
                 st = rapidTarget(ps{k});
                 if ~st.ok, k0 = k; break, end
                 pr.step(labels(k));
+                inR(k) = withWindow(inR(k), ps(k), win, "rapid", false);
                 out(k) = sim(inR(k), "ShowSimulationManager", "off");
             end
             pr.done();
@@ -128,9 +152,10 @@ function out = runSweep(setName, opts)
             how = "";  if fr, how = " with Fast Restart"; end
             fprintf("[%s] cases %d-%d in normal mode%s instead of Rapid Accelerator.\n", setName, k0, numel(in), how);
             if fr, restore = quietFastRestart(); end %#ok<NASGU>
+            in(rest) = withWindow(in(rest), ps(rest), win, "normal", fr);
             out(rest) = sim(in(rest), "ShowProgress", "on", "UseFastRestart", onOff(fr));
         end
-        saveSweep(opts.Save, out, cases, setName);
+        saveSweep(opts.Save, out, cases, setName, win);
         return
     end
 
@@ -138,6 +163,7 @@ function out = runSweep(setName, opts)
         % the compile-time values in p are equal in all cases (checkTunable)
         restore = quietFastRestart(); %#ok<NASGU>
     end
+    in = withWindow(in, ps, win, "normal", opts.FastRestart);
     if opts.UseParallel
         % parsim always uses a parallel pool (starts one if needed)
         out = parsim(in, "ShowProgress", "on", "UseFastRestart", onOff(opts.FastRestart), ...
@@ -146,13 +172,26 @@ function out = runSweep(setName, opts)
         out = sim(in, "ShowProgress", "on", "UseFastRestart", onOff(opts.FastRestart));   % serial
     end
 
-    saveSweep(opts.Save, out, cases, setName);
+    saveSweep(opts.Save, out, cases, setName, win);
 end
 
-function saveSweep(doSave, out, cases, setName)
+function in = withWindow(in, ps, win, mode, fastRestart)
+    % event window: start from the cached operating points (operatingPoints)
+    if ~isempty(win)
+        in = operatingPoints(in, ps, win, mode, FastRestart=fastRestart);
+    end
+end
+
+function mustBeWindow(w)
+    if ~(isempty(w) || (isnumeric(w) && numel(w) == 2 && all(w >= 0)))
+        error("runSweep:window", "Window is [pre post] in seconds around the event, e.g. [1 Inf].");
+    end
+end
+
+function saveSweep(doSave, out, cases, setName, window)
     if ~doSave, return, end
     f = fullfile(resultsFolder(setName, true), "sweep.mat");
-    save(f, "out", "cases", "setName");
+    save(f, "out", "cases", "setName", "window");   % window: [] for runs from t = 0 (eventWindow)
     fprintf("Saved %s\n", f);
 end
 

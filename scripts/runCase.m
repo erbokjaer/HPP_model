@@ -47,6 +47,19 @@ function out = runCase(setName, caseId, opts)
 %                                             delays) or network model differ
 %                                             from the previous run.
 %
+%   runCase(..., Window=[1 Inf])              event window: start 1 s before
+%                                             the earliest event of the case
+%                                             set from a saved operating point
+%                                             and run to the stop time ([pre
+%                                             post]: stop post s after the
+%                                             event). The operating point is
+%                                             made once (a run from 0) and
+%                                             cached per build and pre-event
+%                                             condition (operatingPoints,
+%                                             eventWindow). Event times stay
+%                                             absolute; the results start at
+%                                             the window start.
+%
 %   Results go to results/<setName>/case_NNN.mat with out, p and caseInfo.
 %   listCaseSets() shows the available case sets.
 %
@@ -61,6 +74,7 @@ function out = runCase(setName, caseId, opts)
         opts.Network (1,1) string {mustBeMember(opts.Network, ["", "nodal", "simscape"])} = ""
         opts.FastRestart (1,1) logical = false
         opts.Delays (1,1) string {mustBeMember(opts.Delays, ["", "auto", "fixed", "variable"])} = ""
+        opts.Window double {mustBeWindow} = []
     end
     persistent lastSignature     % compile-time values of the model kept compiled
 
@@ -112,15 +126,29 @@ function out = runCase(setName, caseId, opts)
         lastSignature = [];
     end
 
-    pr = Progress(setName + " case " + k, 0);          % estimate: this case last time
-    pr.step("simulating " + p.sim.Tstop + " s (" + modeName(mode) + ")");
+    win = [];
+    if ~isempty(opts.Window)
+        % event window: start from the operating point before the set's
+        % earliest event (made and cached on first use)
+        win = eventWindow(cases, HPP_parameters(), opts.Window);
+        in = operatingPoints(in, p, win, mode, FastRestart=useFR && mode == "normal");
+    end
+
+    title = setName + " case " + k;  if ~isempty(win), title = title + " (window)"; end
+    pr = Progress(title, 0);                            % estimate: this case last time
+    if isempty(win)
+        pr.step("simulating " + p.sim.Tstop + " s (" + modeName(mode) + ")");
+    else
+        pr.step("simulating " + win.tOp + "-" + min(win.tEvent + win.post, p.sim.Tstop) + ...
+            " s from the operating point (" + modeName(mode) + ")");
+    end
     out = sim(in);
     pr.done();
 
     if opts.Save
         folder = resultsFolder(setName, true);
         caseInfo = struct("set", setName, "index", k, "name", caseName, ...
-                          "row", cases(k, :), "mode", mode);
+                          "row", cases(k, :), "mode", mode, "window", win);
         f = fullfile(folder, sprintf("case_%03d.mat", k));
         save(f, "out", "p", "caseInfo");
         fprintf("Saved %s\n", f);
@@ -140,6 +168,12 @@ function mustBeCaseSetName(x)
         error("runCase:setName", ...
               "The first argument is the case set name, e.g. runCase(""grid_Pref_Pbess"", 3). " + ...
               "See listCaseSets().");
+    end
+end
+
+function mustBeWindow(w)
+    if ~(isempty(w) || (isnumeric(w) && numel(w) == 2 && all(w >= 0)))
+        error("runCase:window", "Window is [pre post] in seconds around the event, e.g. [1 Inf].");
     end
 end
 
