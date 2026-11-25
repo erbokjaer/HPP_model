@@ -22,7 +22,8 @@ function st = rapidTarget(p, opts)
 %   rebuilt only when something fixed at compile time changes: the layout
 %   (units per plant), the time step, the delay mode p.comm.delays (with
 %   "fixed" delays also the delays; with "variable" delays comm.maxDelay,
-%   the size of the delay buffers), the network model, or a model file in
+%   the size of the delay buffers), the network model (with the Simscape
+%   network: its mode, phasor or EMT, simscapeMode), or a model file in
 %   models/ (after buildHPP or an edit). p.comm.delays = "auto" counts as
 %   "fixed" here (runCase / runSweep resolve it per case set, delayMode). The
 %   fingerprint of these is saved next to the target
@@ -31,10 +32,6 @@ function st = rapidTarget(p, opts)
 %
 %   Not possible (normal mode instead), with the reason in the warning:
 %   - no C compiler selected (mex -setup C);
-%   - the Simscape network: in Rapid Accelerator its grid and network data are
-%     fixed when the program is built, so other cases would silently run with
-%     the values of the build (measured: a voltage dip and SCR 3 gave the
-%     nominal results);
 %   - checkModels finds block expressions that compiled code cannot use;
 %   - the build fails.
 %   A failure is remembered for the same compile-time values and model files,
@@ -81,9 +78,6 @@ function st = rapidTarget(p, opts)
     end
     if isempty(cc)
         st.reason = "no C compiler is selected (run mex -setup C; MinGW-w64 is the supported free one)";
-    elseif p.net.solverType == "simscape"
-        st.reason = "the Simscape network does not take new parameter values in Rapid Accelerator " + ...
-            "(grid and network data are fixed at build time)";
     else
         findings = checkModels(Quiet=true, Strict=false);
         expr = findings(findings.Check == "expression", :);
