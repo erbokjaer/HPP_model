@@ -5,6 +5,10 @@ function st = rapidTarget(p, opts)
 %                                    values in p
 %   st = rapidTarget(p, Force=true)  always rebuild
 %   st = rapidTarget(p, Strict=true) error on checkModels findings
+%   st = rapidTarget(p, Verbose=true) print Simulink's build log too
+%
+%   A build shows its progress (Progress: the duration of the last build
+%   as an estimate; Simulink reports no progress while it compiles).
 %
 %   Returns a status struct: st.ok (true: run in Rapid Accelerator), st.reason
 %   (why not, when st.ok is false) and st.built (true if built in this call).
@@ -43,6 +47,7 @@ function st = rapidTarget(p, opts)
         p (1,1) struct
         opts.Force (1,1) logical = false
         opts.Strict (1,1) logical = false
+        opts.Verbose (1,1) logical = false
     end
     persistent lastKey lastStatus
     if p.comm.delays == "auto"
@@ -90,7 +95,7 @@ function st = rapidTarget(p, opts)
                 "(first: %s)", height(expr), expr.Block(1));
         else
             try
-                buildTarget(p);
+                buildTarget(p, opts.Verbose);
                 st.ok = true;  st.built = true;
                 save(keyFile, "key");                     % fingerprint for later sessions
             catch err
@@ -105,7 +110,7 @@ function st = rapidTarget(p, opts)
     lastKey = key;  lastStatus = st;
 end
 
-function buildTarget(p)
+function buildTarget(p, verbose)
     load_system("HPP");
     fastRestartOff();                                    % Fast Restart and Rapid Accelerator exclude each other
     % the build reads p from the base workspace and the variant choices
@@ -132,10 +137,13 @@ function buildTarget(p)
         end
     end
 
-    fprintf("Building the Rapid Accelerator target of HPP (once per layout / model change) ...\n");
-    t = tic;
+    % one step: Simulink reports no progress while it compiles; the estimate
+    % is last build's duration. Verbose: Simulink's own build log as well
+    set_param("HPP", "AccelVerboseBuild", onOff(verbose));
+    pr = Progress("Rapid Accelerator build of HPP", 0);
+    pr.step("code generation and C compilation (once per layout / model change)");
     Simulink.BlockDiagram.buildRapidAcceleratorTarget("HPP");
-    fprintf("Rapid Accelerator target built in %.0f s\n", toc(t));
+    pr.done();
 end
 
 function restoreBase(hadP, pOld)
@@ -155,4 +163,8 @@ function s = modelStamp()
     root = currentProject().RootFolder;
     d = dir(fullfile(root, "models", "**", "*.slx"));
     s = max([d.datenum]);
+end
+
+function s = onOff(b)
+    if b, s = "on"; else, s = "off"; end
 end

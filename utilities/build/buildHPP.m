@@ -12,6 +12,8 @@ function buildHPP(opts)
 %                                 names or "<type>_asset"; without Only: all)
 %   buildHPP(..., Strict=true)    stop if checkModels finds a problem in the
 %                                 controller / asset models (default: warn)
+%   Progress: one step per model (waitbar in the desktop, one line per
+%   model with matlab -batch), with an estimate of the time left.
 %   Force=true (older option) only works together with Overwrite=true.
 %
 %   Ownership: HPP.slx is always generated (its structure depends on N), so
@@ -92,46 +94,41 @@ function buildHPP(opts)
     ws0 = warning("off", "Simulink:Engine:MdlFileShadowing");
     restoreWarn = onCleanup(@() warning(ws0));
 
+    % what to build, in order: PLL and FreqMeter first (referenced by the
+    % asset controllers and the plant / HPP subsystems), controllers before
+    % assets (assets reference the asset controllers), the top model last;
+    % created if missing, then maintained in Simulink (Overwrite: rebuilt)
+    jobs = strings(0, 1);
     if opts.All
-        % PLL and FreqMeter first (referenced by the asset controllers and the
-        % plant / HPP subsystems); created if missing, then maintained in Simulink
-        for nm = ["PLL", "FreqMeter"]
+        names = ["PLL", "FreqMeter", "HPPC", "WPPC", "SPPC", "BESSC", "WT_ctrl", "PV_ctrl", "BESS_ctrl", ...
+                 "WT_asset", "PV_asset", "BESS_asset"];
+        for nm = names
             if ~isempty(opts.Only) && ~any(opts.Only == nm), continue, end
-            if opts.Overwrite || ~isfile(fullfile(dirs.ctrl, nm + ".slx"))
-                if nm == "PLL", buildPllModel(dirs.ctrl); else, buildFreqMeterModel(dirs.ctrl); end
+            if endsWith(nm, "_asset"), f = fullfile(dirs.assets, nm + ".slx"); else, f = fullfile(dirs.ctrl, nm + ".slx"); end
+            if opts.Overwrite || ~isfile(f)
+                jobs(end+1) = nm; %#ok<AGROW>
             else
                 fprintf("Kept existing %s.slx\n", nm);
-            end
-        end
-        % controllers before assets (assets reference the asset controllers)
-        for nm = ["HPPC", "WPPC", "SPPC", "BESSC", "WT_ctrl", "PV_ctrl", "BESS_ctrl"]
-            if ~isempty(opts.Only) && ~any(opts.Only == nm)
-                continue
-            end
-            if opts.Overwrite || ~isfile(fullfile(dirs.ctrl, nm + ".slx"))
-                switch nm
-                    case "HPPC",    buildHppcCtrl(dirs.ctrl);          % closed-loop P, frequency response
-                    case "WT_ctrl", buildWTCtrlType4A(dirs.ctrl);      % IEC 61400-27-1 Type 4A
-                    case {"WPPC", "SPPC", "BESSC"}
-                        buildPlantCtrlRepc(nm, dirs.ctrl);             % WECC REPC_A plant controllers
-                    otherwise
-                        buildReecCtrl(extractBefore(nm, "_"), dirs.ctrl);   % WECC REEC_B / REEC_C
-                end
-            else
-                fprintf("Kept existing %s.slx\n", nm);
-            end
-        end
-        for type = ["WT", "PV", "BESS"]
-            if ~isempty(opts.Only) && ~any(opts.Only == type + "_asset")
-                continue
-            end
-            if opts.Overwrite || ~isfile(fullfile(dirs.assets, type + "_asset.slx"))
-                buildAsset(type, dirs.assets);
-            else
-                fprintf("Kept existing %s_asset.slx\n", type);
             end
         end
     end
-
+    pr = Progress("Building the HPP models", numel(jobs) + 1);
+    for nm = jobs
+        pr.step(nm);
+        switch nm
+            case "PLL",       buildPllModel(dirs.ctrl);
+            case "FreqMeter", buildFreqMeterModel(dirs.ctrl);
+            case "HPPC",      buildHppcCtrl(dirs.ctrl);          % closed-loop P, frequency response
+            case "WT_ctrl",   buildWTCtrlType4A(dirs.ctrl);      % IEC 61400-27-1 Type 4A
+            case {"WPPC", "SPPC", "BESSC"}
+                buildPlantCtrlRepc(nm, dirs.ctrl);               % WECC REPC_A plant controllers
+            case {"PV_ctrl", "BESS_ctrl"}
+                buildReecCtrl(extractBefore(nm, "_"), dirs.ctrl);   % WECC REEC_B / REEC_C
+            otherwise
+                buildAsset(extractBefore(nm, "_asset"), dirs.assets);
+        end
+    end
+    pr.step("HPP (top model)");
     buildTop(p, dirs.top);
+    pr.done();
 end

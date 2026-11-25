@@ -112,7 +112,10 @@ function out = runCase(setName, caseId, opts)
         lastSignature = [];
     end
 
+    pr = Progress(setName + " case " + k, 0);          % estimate: this case last time
+    pr.step("simulating " + p.sim.Tstop + " s (" + modeName(mode) + ")");
     out = sim(in);
+    pr.done();
 
     if opts.Save
         folder = resultsFolder(setName, true);

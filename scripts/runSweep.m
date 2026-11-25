@@ -112,13 +112,15 @@ function out = runSweep(setName, opts)
         else
             % per case: rapidTarget rebuilds only if this case changes a
             % compile-time value (layout, time step, delays, network model)
-            t = tic;
+            pr = Progress("Case set " + setName, numel(in));
+            labels = caseLabels(cases);
             for k = 1:numel(in)
                 st = rapidTarget(ps{k});
                 if ~st.ok, k0 = k; break, end
+                pr.step(labels(k));
                 out(k) = sim(inR(k), "ShowSimulationManager", "off");
-                fprintf("[%s] case %d/%d done (%.0f s)\n", setName, k, numel(in), toc(t));
             end
+            pr.done();
         end
         if k0 <= numel(in)
             rest = k0:numel(in);
