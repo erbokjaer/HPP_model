@@ -342,6 +342,8 @@ Goal: study how the HPP and the power system respond to each other in frequency,
 
 ### 14.1 Three simulation tiers
 
+**Revised 2026-11-25 (section 14.9):** the dq tier is set aside. The tiers are now **RMS** (nodal network, the main tool) and **Simscape** with one network in two modes, **phasor** (frequency-and-time) and **EMT** (time mode), for checks. The table below is the original plan of 2026-11-19.
+
 | Tier | Network | Converters | Step | Use | Run time per 60 s case (estimate) |
 |---|---|---|---|---|---|
 | **RMS** (today) | algebraic V = Z·I at 50 Hz (nodal solver) | IEC / WECC RMS models | 1 ms | sweeps, dispatch, grid code, frequency events | 1.5–3 s (measured 1.5 s without stages 6–7) |
@@ -408,7 +410,9 @@ Checks (Rapid Accelerator):
 - `pll_scr` (20° jump): 20 Hz oscillates without decaying (74 MW at SCR 1.5); 2–10 Hz settle in 0.5–2 s, slowest at SCR 1.5.
 - The RMS tier has no network electromagnetic dynamics, so these limits are optimistic for weak grids; the dq tier (stage 8) repeats the map.
 
-### 14.5 Stage 8: dq network
+### 14.5 Stage 8: dq network  (tried, set aside 2026-11-25)
+
+**Status:** step 1 built on branch `dq-network` (pushed, not merged): `params/networkDqData.m` (the nodal network as a discrete state-space model in the ω0 frame, 32 real states, asset terminals v_term = v_tap + Zt·I, exact zero-order hold, steady-state start) and the network choice Dq (`buildNetworkDq`, `HPP_network = 3`). It matched the nodal network in steady state (1e-14 pu) and at SCR 10 / 5 (transients ≤ 2 MW), and oscillated at SCR ≤ 4 with the RMS asset models (current sources without inner loop or filter: a dynamic network needs converters of the same fidelity). Set aside because industry practice is RMS for grid studies and EMT for weak-grid / IBR checks, with dq / dynamic-phasor models mostly used for academic small-signal analysis, which the PhD question does not need (14.9). The plan as it was:
 
 - Network in the ω0 frame: inductors L di/dt = v − R·i − jω0·L·i, capacitors C dv/dt = i − jω0·C·v; the whole network as dx/dt = A·x + B·u, inputs the asset currents / voltages, outputs the bus voltages. Built from the same network data as the nodal solver (`networkParameters`).
 - With the frame fixed at ω0, A and B are constant: discretize once (trapezoidal / Tustin) in `deriveParameters`, x[k+1] = Ad·x[k] + Bd·u[k], as tunable constants like today's Z. One matrix–vector product per step; works in Rapid Accelerator.
@@ -423,8 +427,8 @@ Checks (Rapid Accelerator):
 
 ### 14.7 EMT tier
 
-- Simscape Electrical in time mode, or PSCAD with the controllers as DLLs (the original plan). Converters as averaged voltage sources with the same inner loops as in the dq tier; the RMS asset models (IEC, WECC) are not valid in EMT.
-- Simscape parameters do not change in Rapid Accelerator (section 13), so Simscape EMT runs in normal mode; used for a few cases.
+- Simscape Electrical in time mode, or PSCAD with the controllers as DLLs (the original plan). Converters as averaged voltage sources with an inner current loop and filter (14.9, work package C); the RMS asset models (IEC, WECC) are not valid in EMT.
+- Revised 2026-11-25: the same Simscape network as the phasor (frequency-and-time) tier, only the solver configuration differs (14.9). Rapid Accelerator becomes possible once the network's block parameters are run-time configurable and the grid events are signals (work package A); before that Simscape parameters did not change in Rapid Accelerator (section 13).
 
 ### 14.8 Decided (2026-11-19)
 
@@ -441,4 +445,21 @@ Checks (Rapid Accelerator):
 | EMT tier | **In Simulink** (Simscape Electrical, time mode) for now; PSCAD later with the DLLs. |
 | Unbalanced faults | **Positive sequence only** in the dq tier first, to measure the run time; a negative-sequence network later. |
 
-Order of work: stage 6 (swing equation, Energinet profiles, frequency measurement) and stage 7 (PLLs) in the RMS tier first, then the dq network (stage 8) with the LCL / DC link converter for the BESS, then the BESS VSM (stage 9), then the EMT tier for validation.
+Order of work: stage 6 (swing equation, Energinet profiles, frequency measurement) and stage 7 (PLLs) in the RMS tier first, then the dq network (stage 8) with the LCL / DC link converter for the BESS, then the BESS VSM (stage 9), then the EMT tier for validation. (Superseded by 14.9.)
+
+### 14.9 Decided (2026-11-25): RMS plus Simscape phasor / EMT
+
+| Topic | Decision |
+|---|---|
+| Tiers | **RMS** (nodal network) is the main tool, as in industry grid studies with the same generic models (IEC 61400-27-1, WECC). **Simscape** for checks: one network, **phasor** (frequency-and-time) or **EMT** (time mode). The dq tier is set aside (14.5). |
+| One network, two modes | Only the Solver Configuration changes: `EquationFormulation` frequency-and-time or time, local step `p.sim.Ts` or about 20–50 µs. The interface already fits both: three-phase controlled current sources fed with magnitude and phase, voltages back as the space phasor at ω0. EMT adds a one-cycle filter on the measured voltage phasor. The mode is a compile-time parameter (`p.net.simscapeMode`, in `compileSignature`); each mode can keep its own Rapid Accelerator target (cache folder). |
+| Rapid Accelerator for Simscape | Network block parameters run-time configurable, grid events (dip, phase jump) as signals, fixed-step local solver; check: dip and SCR cases equal in Rapid and normal mode. |
+| Initialisation | Saved **operating points** (complete model state, per build and pre-event condition) instead of long settling; cases simulate an **event window** (event times relative to the start). Also for RMS sweeps. |
+| Converter for Simscape EMT | Averaged converter with **inner dq current loop**, **LCL filter**, **simple DC link**, **angle-preserving current limit**, as a variant of the asset's converter part (the RMS current source stays the default). |
+| EMT studies | Aggregated plants (one converter per plant or feeder); weak grid, PLL bandwidth, FRT; compared with RMS to show where RMS holds. |
+
+Work packages (each on its own branch from main, regression against main before merging; models are rebuilt after each merge):
+- **A** Simscape in Rapid Accelerator, then the phasor / EMT mode;
+- **B** operating points and event windows;
+- **C** converter variant;
+- **D** (after A–C) the EMT case set and the RMS comparison.
