@@ -3,12 +3,15 @@ function sig = compileSignature(p)
 %
 %   The layout (number of units), the time step, the delay mode with the
 %   delays (fixed) or the size of the delay buffers (variable), and the
-%   variant choices: network model and PLL. All other values are tunable
+%   variant choices: network model, Simscape mode (phasor / EMT, with its
+%   solver step, simscapeMode) and PLL. All other values are tunable
 %   (network data, controllers, grid events). A Fast Restart model or a
 %   Rapid Accelerator target is reused only while this stays the same
 %   (runCase, rapidTarget); runSweep's checkTunable refuses case sets that
 %   change these columns.
 
+    [mode, Tsolver] = simscapeMode(p);                % Simscape phasor / EMT, solver step
     sig = struct("N", [p.wt.N, p.pv.N, p.bess.N], "Ts", p.sim.Ts, ...
-        "delays", delaySignature(p), "network", p.net.solverType, "pll", p.pll.type);
+        "delays", delaySignature(p), "network", p.net.solverType, "pll", p.pll.type, ...
+        "simscape", [mode, Tsolver]);
 end
