@@ -1,0 +1,1532 @@
+{
+  "blocks": [
+    {
+      "name": "P_set",
+      "type": "Inport",
+      "pos": [
+        305,
+        63,
+        335,
+        77
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Q_set",
+      "type": "Inport",
+      "pos": [
+        305,
+        118,
+        335,
+        132
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V_re",
+      "type": "Inport",
+      "pos": [
+        305,
+        178,
+        335,
+        192
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V_im",
+      "type": "Inport",
+      "pos": [
+        305,
+        233,
+        335,
+        247
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "P_wind_avail",
+      "type": "Inport",
+      "pos": [
+        305,
+        413,
+        335,
+        427
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Current injection",
+      "type": "SubSystem",
+      "pos": [
+        1145,
+        69,
+        1270,
+        291
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "From",
+      "type": "From",
+      "pos": [
+        525,
+        219,
+        545,
+        241
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "P"
+    },
+    {
+      "name": "From1",
+      "type": "From",
+      "pos": [
+        525,
+        264,
+        545,
+        286
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "Q"
+    },
+    {
+      "name": "Generator system",
+      "type": "SubSystem",
+      "pos": [
+        980,
+        68,
+        1110,
+        217
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "I_im from 2",
+      "type": "From",
+      "pos": [
+        1605,
+        284,
+        1650,
+        306
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "I_im"
+    },
+    {
+      "name": "I_im goto",
+      "type": "Goto",
+      "pos": [
+        1290,
+        204,
+        1335,
+        226
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "I_im"
+    },
+    {
+      "name": "I_re from 1",
+      "type": "From",
+      "pos": [
+        1605,
+        229,
+        1650,
+        251
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "I_re"
+    },
+    {
+      "name": "I_re goto",
+      "type": "Goto",
+      "pos": [
+        1315,
+        94,
+        1360,
+        116
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "I_re"
+    },
+    {
+      "name": "P from 2",
+      "type": "From",
+      "pos": [
+        1605,
+        59,
+        1625,
+        81
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "P"
+    },
+    {
+      "name": "P goto",
+      "type": "Goto",
+      "pos": [
+        1520,
+        159,
+        1540,
+        181
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "P"
+    },
+    {
+      "name": "P meas",
+      "type": "Memory",
+      "pos": [
+        570,
+        215,
+        600,
+        245
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "PQ measurement",
+      "type": "SubSystem",
+      "pos": [
+        1405,
+        83,
+        1490,
+        422
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "P_avail from 1",
+      "type": "From",
+      "pos": [
+        1605,
+        174,
+        1675,
+        196
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "P_avail"
+    },
+    {
+      "name": "P_avail goto",
+      "type": "Goto",
+      "pos": [
+        850,
+        319,
+        920,
+        341
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "P_avail"
+    },
+    {
+      "name": "P_set from 1",
+      "type": "From",
+      "pos": [
+        615,
+        84,
+        665,
+        106
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "P_set"
+    },
+    {
+      "name": "P_set goto",
+      "type": "Goto",
+      "pos": [
+        370,
+        59,
+        420,
+        81
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "P_set"
+    },
+    {
+      "name": "P_wind_avail from 1",
+      "type": "From",
+      "pos": [
+        555,
+        309,
+        665,
+        331
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "P_wind_avail"
+    },
+    {
+      "name": "P_wind_avail goto",
+      "type": "Goto",
+      "pos": [
+        370,
+        409,
+        480,
+        431
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "P_wind_avail"
+    },
+    {
+      "name": "Q from 2",
+      "type": "From",
+      "pos": [
+        1605,
+        114,
+        1625,
+        136
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "Q"
+    },
+    {
+      "name": "Q goto",
+      "type": "Goto",
+      "pos": [
+        1520,
+        329,
+        1540,
+        351
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "Q"
+    },
+    {
+      "name": "Q meas",
+      "type": "Memory",
+      "pos": [
+        570,
+        260,
+        600,
+        290
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Q_set from 1",
+      "type": "From",
+      "pos": [
+        615,
+        129,
+        665,
+        151
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "Q_set"
+    },
+    {
+      "name": "Q_set goto",
+      "type": "Goto",
+      "pos": [
+        370,
+        114,
+        420,
+        136
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "Q_set"
+    },
+    {
+      "name": "V_im from 1",
+      "type": "From",
+      "pos": [
+        515,
+        184,
+        560,
+        206
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_im"
+    },
+    {
+      "name": "V_im from 2",
+      "type": "From",
+      "pos": [
+        620,
+        399,
+        665,
+        421
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_im"
+    },
+    {
+      "name": "V_im from 3",
+      "type": "From",
+      "pos": [
+        1340,
+        369,
+        1385,
+        391
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_im"
+    },
+    {
+      "name": "V_im goto",
+      "type": "Goto",
+      "pos": [
+        370,
+        229,
+        415,
+        251
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_im"
+    },
+    {
+      "name": "V_re from 1",
+      "type": "From",
+      "pos": [
+        515,
+        159,
+        560,
+        181
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_re"
+    },
+    {
+      "name": "V_re from 2",
+      "type": "From",
+      "pos": [
+        620,
+        354,
+        665,
+        376
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_re"
+    },
+    {
+      "name": "V_re from 3",
+      "type": "From",
+      "pos": [
+        1340,
+        284,
+        1385,
+        306
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_re"
+    },
+    {
+      "name": "V_re goto",
+      "type": "Goto",
+      "pos": [
+        370,
+        174,
+        415,
+        196
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "V_re"
+    },
+    {
+      "name": "ctrl",
+      "type": "ModelReference",
+      "pos": [
+        685,
+        69,
+        820,
+        436
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "f_pll goto",
+      "type": "Goto",
+      "pos": [
+        850,
+        394,
+        900,
+        416
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": "f_pll"
+    },
+    {
+      "name": "|V|",
+      "type": "Math",
+      "pos": [
+        615,
+        157,
+        655,
+        208
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "P",
+      "type": "Outport",
+      "pos": [
+        1660,
+        63,
+        1690,
+        77
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "Q",
+      "type": "Outport",
+      "pos": [
+        1660,
+        118,
+        1690,
+        132
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "P_avail",
+      "type": "Outport",
+      "pos": [
+        1685,
+        178,
+        1715,
+        192
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "I_re",
+      "type": "Outport",
+      "pos": [
+        1685,
+        233,
+        1715,
+        247
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "I_im",
+      "type": "Outport",
+      "pos": [
+        1685,
+        288,
+        1715,
+        302
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    }
+  ],
+  "areas": [
+    {
+      "title": "Outputs",
+      "pos": [
+        1577,
+        23,
+        1734,
+        467
+      ],
+      "color": "[0.950000, 0.950000, 0.950000]"
+    },
+    {
+      "title": "Generator system (IEC 61400-27-1 Type 4)",
+      "pos": [
+        959,
+        27,
+        1559,
+        463
+      ],
+      "color": "[0.878000, 0.965000, 0.925000]"
+    },
+    {
+      "title": "Asset controller (WT_ctrl)",
+      "pos": [
+        505,
+        27,
+        941,
+        466
+      ],
+      "color": "[0.894000, 0.906000, 0.988000]"
+    },
+    {
+      "title": "Inputs",
+      "pos": [
+        290,
+        27,
+        491,
+        466
+      ],
+      "color": "[0.950000, 0.950000, 0.950000]"
+    }
+  ],
+  "trees": [
+    {
+      "src": "From1",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            550,
+            275
+          ],
+          [
+            565,
+            275
+          ]
+        ],
+        "dst": "Q meas",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "From",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            550,
+            230
+          ],
+          [
+            565,
+            230
+          ]
+        ],
+        "dst": "P meas",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "I_im from 2",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1655,
+            295
+          ],
+          [
+            1680,
+            295
+          ]
+        ],
+        "dst": "I_im",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "I_re from 1",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1655,
+            240
+          ],
+          [
+            1680,
+            240
+          ]
+        ],
+        "dst": "I_re",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "P_avail from 1",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1680,
+            185
+          ],
+          [
+            1680,
+            185
+          ]
+        ],
+        "dst": "P_avail",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Q from 2",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1630,
+            125
+          ],
+          [
+            1655,
+            125
+          ]
+        ],
+        "dst": "Q",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "P from 2",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1630,
+            70
+          ],
+          [
+            1655,
+            70
+          ]
+        ],
+        "dst": "P",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "V_im from 3",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1390,
+            380
+          ],
+          [
+            1400,
+            380
+          ]
+        ],
+        "dst": "PQ measurement",
+        "dt": "inport",
+        "dp": 4
+      }
+    },
+    {
+      "src": "V_re from 3",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1390,
+            295
+          ],
+          [
+            1400,
+            295
+          ]
+        ],
+        "dst": "PQ measurement",
+        "dt": "inport",
+        "dp": 3
+      }
+    },
+    {
+      "src": "Current injection",
+      "sp": 2,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              1275,
+              235
+            ],
+            [
+              1275,
+              235
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              1275,
+              235
+            ],
+            [
+              1275,
+              215
+            ],
+            [
+              1285,
+              215
+            ]
+          ],
+          "dst": "I_im goto",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              1275,
+              235
+            ],
+            [
+              1363,
+              235
+            ],
+            [
+              1363,
+              210
+            ],
+            [
+              1400,
+              210
+            ]
+          ],
+          "dst": "PQ measurement",
+          "dt": "inport",
+          "dp": 2
+        }
+      ]
+    },
+    {
+      "src": "Current injection",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              1275,
+              125
+            ],
+            [
+              1301,
+              125
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              1301,
+              125
+            ],
+            [
+              1301,
+              105
+            ],
+            [
+              1310,
+              105
+            ]
+          ],
+          "dst": "I_re goto",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              1301,
+              125
+            ],
+            [
+              1400,
+              125
+            ]
+          ],
+          "dst": "PQ measurement",
+          "dt": "inport",
+          "dp": 1
+        }
+      ]
+    },
+    {
+      "src": "ctrl",
+      "sp": 4,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            825,
+            255
+          ],
+          [
+            1140,
+            255
+          ]
+        ],
+        "dst": "Current injection",
+        "dt": "inport",
+        "dp": 3
+      }
+    },
+    {
+      "src": "Generator system",
+      "sp": 2,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1115,
+            180
+          ],
+          [
+            1140,
+            180
+          ]
+        ],
+        "dst": "Current injection",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "Generator system",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1115,
+            105
+          ],
+          [
+            1140,
+            105
+          ]
+        ],
+        "dst": "Current injection",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "ctrl",
+      "sp": 2,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            825,
+            180
+          ],
+          [
+            975,
+            180
+          ]
+        ],
+        "dst": "Generator system",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "ctrl",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            825,
+            105
+          ],
+          [
+            975,
+            105
+          ]
+        ],
+        "dst": "Generator system",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "ctrl",
+      "sp": 5,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            825,
+            405
+          ],
+          [
+            845,
+            405
+          ]
+        ],
+        "dst": "f_pll goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "ctrl",
+      "sp": 3,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            825,
+            330
+          ],
+          [
+            845,
+            330
+          ]
+        ],
+        "dst": "P_avail goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "V_im from 2",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            670,
+            410
+          ],
+          [
+            680,
+            410
+          ]
+        ],
+        "dst": "ctrl",
+        "dt": "inport",
+        "dp": 8
+      }
+    },
+    {
+      "src": "V_re from 2",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            670,
+            365
+          ],
+          [
+            680,
+            365
+          ]
+        ],
+        "dst": "ctrl",
+        "dt": "inport",
+        "dp": 7
+      }
+    },
+    {
+      "src": "P_wind_avail from 1",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            670,
+            320
+          ],
+          [
+            680,
+            320
+          ]
+        ],
+        "dst": "ctrl",
+        "dt": "inport",
+        "dp": 6
+      }
+    },
+    {
+      "src": "Q meas",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            605,
+            275
+          ],
+          [
+            680,
+            275
+          ]
+        ],
+        "dst": "ctrl",
+        "dt": "inport",
+        "dp": 5
+      }
+    },
+    {
+      "src": "P meas",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            605,
+            230
+          ],
+          [
+            680,
+            230
+          ]
+        ],
+        "dst": "ctrl",
+        "dt": "inport",
+        "dp": 4
+      }
+    },
+    {
+      "src": "|V|",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            660,
+            185
+          ],
+          [
+            680,
+            185
+          ]
+        ],
+        "dst": "ctrl",
+        "dt": "inport",
+        "dp": 3
+      }
+    },
+    {
+      "src": "Q_set from 1",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            670,
+            140
+          ],
+          [
+            680,
+            140
+          ]
+        ],
+        "dst": "ctrl",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "P_set from 1",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            670,
+            95
+          ],
+          [
+            680,
+            95
+          ]
+        ],
+        "dst": "ctrl",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "PQ measurement",
+      "sp": 2,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1495,
+            340
+          ],
+          [
+            1515,
+            340
+          ]
+        ],
+        "dst": "Q goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "PQ measurement",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1495,
+            170
+          ],
+          [
+            1515,
+            170
+          ]
+        ],
+        "dst": "P goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "V_im from 1",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            565,
+            195
+          ],
+          [
+            610,
+            195
+          ]
+        ],
+        "dst": "|V|",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "V_re from 1",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            565,
+            170
+          ],
+          [
+            610,
+            170
+          ]
+        ],
+        "dst": "|V|",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "P_wind_avail",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            340,
+            420
+          ],
+          [
+            365,
+            420
+          ]
+        ],
+        "dst": "P_wind_avail goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "V_im",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            340,
+            240
+          ],
+          [
+            365,
+            240
+          ]
+        ],
+        "dst": "V_im goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "V_re",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            340,
+            185
+          ],
+          [
+            365,
+            185
+          ]
+        ],
+        "dst": "V_re goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "Q_set",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            340,
+            125
+          ],
+          [
+            365,
+            125
+          ]
+        ],
+        "dst": "Q_set goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "P_set",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            340,
+            70
+          ],
+          [
+            365,
+            70
+          ]
+        ],
+        "dst": "P_set goto",
+        "dt": "inport",
+        "dp": 1
+      }
+    }
+  ],
+  "system": "WT_asset"
+}

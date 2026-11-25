@@ -11,8 +11,9 @@ function fig = plotResults(source, caseId, opts)
 %                                             (default "auto": MATLAB's theme)
 %   plotResults(..., NewFigure=true)          keep the old figure, open a new one
 %
-%   One tile per signal, stacked with a shared time axis. P in MW, Q in
-%   Mvar, V in pu. Lines are labelled with caseLabels and coloured with dtuColors
+%   One tile per signal, stacked with a shared time axis, in the units of
+%   signalUnit (P in MW, Q in Mvar, V in pu, f in Hz). Lines are labelled
+%   with caseLabels and coloured with dtuColors
 %   (the DTU design guide palette; lighter tints on a dark figure).
 %   Returns the figure handle.
 %
@@ -68,14 +69,14 @@ function fig = plotResults(source, caseId, opts)
         ax(s).LineStyleOrder = ["-", "--", ":"];   % dashed once the colours run out
         hold(ax(s), "on");
         for k = find(ok(:))'
-            [time, data] = getSignal(out(k), sig);
-            plot(ax(s), time, data * unitScale(sig), "LineWidth", 1.2, ...
+            [time, data] = resultSignal(out(k), sig, true);
+            plot(ax(s), time, data, "LineWidth", 1.2, ...
                  "DisplayName", labels(k));
         end
         hold(ax(s), "off");
         grid(ax(s), "on");
         box(ax(s), "on");
-        ylabel(ax(s), sig + " [" + unitName(sig) + "]", "Interpreter", "none");
+        ylabel(ax(s), sig + " [" + signalUnit(sig) + "]", "Interpreter", "none");
         if s < numel(opts.Signals)
             ax(s).XTickLabel = [];
         end
@@ -158,36 +159,5 @@ function labels = runLabels(out, cases)
         labels = caseLabels(cases);
     else
         labels = "case " + string(1:numel(out))';
-    end
-end
-
-function [time, data] = getSignal(o, sig)
-    logged = string(o.yout.getElementNames);
-    if ~ismember(sig, logged)
-        error("plotResults:noSignal", "Signal ""%s"" is not logged. Logged signals: %s", ...
-              sig, strjoin(logged, ", "));
-    end
-    v = o.yout.get(char(sig)).Values;
-    time = v.Time;
-    data = squeeze(v.Data);
-end
-
-function k = unitScale(sig)
-    if startsWith(sig, ["P_", "Q_"])
-        k = 1e-6;
-    else
-        k = 1;
-    end
-end
-
-function u = unitName(sig)
-    if startsWith(sig, "P_")
-        u = "MW";
-    elseif startsWith(sig, "Q_")
-        u = "Mvar";
-    elseif startsWith(sig, "V_")
-        u = "pu";
-    else
-        u = "-";
     end
 end

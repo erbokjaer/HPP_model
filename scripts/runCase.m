@@ -98,72 +98,34 @@ function out = runCase(setName, caseId, opts)
         % the network model and other compile-time values are in the target
         in = in.setModelParameter("RapidAcceleratorUpToDateCheck", "off");
     else
-        in = in.setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
-        in = in.setVariable("HPP_delays", delayCode, "Workspace", "HPP");
+        in = setVariants(in, p, delayCode);              % network, delays, PLL
     end
 
     if useFR && mode == "normal"
         load_system("HPP");
         sig = compileSignature(p);
-        if ~isequal(sig, lastSignature) && strcmp(get_param("HPP", "FastRestart"), "on")
-            set_param("HPP", "FastRestart", "off");      % compile-time values changed: recompile
+        if ~isequal(sig, lastSignature)
+            fastRestartOff();                            % compile-time values changed: recompile
         end
         set_param("HPP", "FastRestart", "on");
         lastSignature = sig;
-        % p also contains compile-time values; they are equal to the compiled
-        % ones here (checked above), so these warnings are expected
-        ids = ["Simulink:Engine:NonTunableVarChangedInFastRestart", ...
-               "Simulink:Engine:NonTunableVarChangedMaxWarnings"];
-        old = arrayfun(@(i) warning("off", i), ids);
-        restore = onCleanup(@() warning(old));
-    elseif mode ~= "rapid" && bdIsLoaded("HPP") && strcmp(get_param("HPP", "FastRestart"), "on")
-        set_param("HPP", "FastRestart", "off");
+        restore = quietFastRestart(); %#ok<NASGU>
+    elseif mode ~= "rapid" && fastRestartOff()
         lastSignature = [];
     end
 
+    pr = Progress(setName + " case " + k, 0);          % estimate: this case last time
+    pr.step("simulating " + p.sim.Tstop + " s (" + modeName(mode) + ")");
     out = sim(in);
+    pr.done();
 
     if opts.Save
-        folder = fullfile(currentProject().RootFolder, "results", setName);
-        if ~isfolder(folder)
-            mkdir(folder);
-        end
+        folder = resultsFolder(setName, true);
         caseInfo = struct("set", setName, "index", k, "name", caseName, ...
                           "row", cases(k, :), "mode", mode);
         f = fullfile(folder, sprintf("case_%03d.mat", k));
         save(f, "out", "p", "caseInfo");
         fprintf("Saved %s\n", f);
-    end
-end
-
-function [k, caseName] = selectCase(cases, caseId, setName)
-    rowNames = string(cases.Properties.RowNames);
-    n = height(cases);
-
-    if isempty(caseId)
-        if n ~= 1
-            error("runCase:noCase", ...
-                  "Case set ""%s"" has %d cases. Give one, e.g. runCase(""%s"", 1).", ...
-                  setName, n, setName);
-        end
-        k = 1;
-    elseif isnumeric(caseId)
-        if ~isscalar(caseId) || caseId ~= round(caseId) || caseId < 1 || caseId > n
-            error("runCase:badIndex", "Case set ""%s"" has cases 1-%d.", setName, n);
-        end
-        k = caseId;
-    else
-        k = find(rowNames == string(caseId), 1);
-        if isempty(k)
-            error("runCase:badName", "Case set ""%s"" has no case named ""%s"". Names: %s", ...
-                  setName, string(caseId), strjoin(rowNames, ", "));
-        end
-    end
-
-    if isempty(rowNames)
-        caseName = "";
-    else
-        caseName = rowNames(k);
     end
 end
 
@@ -185,13 +147,4 @@ end
 
 function m = modeName(mode)
     m = struct("normal","normal","accelerator","accelerator","rapid","rapid-accelerator").(mode);
-end
-
-function sig = compileSignature(p)
-    % what is fixed when HPP.slx is compiled: the layout (number of units),
-    % the time step, the delay mode with the delays (fixed) or the size of
-    % the delay buffers (variable), and the network model. All other values
-    % are tunable (network data, controllers, grid events).
-    sig = struct("N", [p.wt.N, p.pv.N, p.bess.N], "Ts", p.sim.Ts, ...
-        "delays", delaySignature(p), "network", p.net.solverType);
 end

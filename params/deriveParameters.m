@@ -46,6 +46,8 @@ function p = deriveParameters(p)
         end
         q.f0 = p.grid.f0;
         q.Ts = p.sim.Ts;
+        q.w0 = 2 * pi * q.f0;          % [rad/s] for f = 1 + dw / w0 (block expressions: no pi)
+        q.wlim = 2 * pi * 5;           % [rad/s] frequency limit of the PLL, +-5 Hz
         assert(q.Npre <= 50 && q.Navg <= 50 && q.Nroc <= 1000, ...
             "pll.%s: Tpre and Tavg must be at most 50 steps, Trocof at most 1000 steps", g);
         p.pll.(g) = q;

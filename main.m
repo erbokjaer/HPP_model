@@ -29,7 +29,7 @@ if setName == "all"
     sets = listCaseSets();
     root = currentProject().RootFolder;
     for s = sets(:)'
-        if ~rerun && isfile(fullfile(root, "results", s, "sweep.mat"))
+        if ~rerun && isfile(fullfile(resultsFolder(s), "sweep.mat"))
             fprintf("Kept saved results of %s\n", s);
             continue
         end

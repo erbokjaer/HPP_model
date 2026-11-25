@@ -1,0 +1,890 @@
+{
+  "blocks": [
+    {
+      "name": "V_re",
+      "type": "Inport",
+      "pos": [
+        20,
+        78,
+        50,
+        92
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V_im",
+      "type": "Inport",
+      "pos": [
+        20,
+        108,
+        50,
+        122
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "1 +",
+      "type": "Bias",
+      "pos": [
+        915,
+        0,
+        960,
+        30
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "MAF",
+      "type": "SubSystem",
+      "pos": [
+        300,
+        95,
+        410,
+        155
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "PI",
+      "type": "SubSystem",
+      "pos": [
+        585,
+        110,
+        695,
+        140
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "V",
+      "type": "RealImagToComplex",
+      "pos": [
+        90,
+        80,
+        130,
+        120
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "angle",
+      "type": "SubSystem",
+      "pos": [
+        775,
+        110,
+        885,
+        170
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "angle(V)",
+      "type": "ComplexToMagnitudeAngle",
+      "pos": [
+        535,
+        265,
+        575,
+        295
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "dw ÷ w0",
+      "type": "Product",
+      "pos": [
+        845,
+        -5,
+        880,
+        35
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "e^(-j th)",
+      "type": "SubSystem",
+      "pos": [
+        380,
+        205,
+        480,
+        235
+      ],
+      "orient": "left",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "injection angle",
+      "type": "SubSystem",
+      "pos": [
+        1075,
+        125,
+        1195,
+        185
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "phase detector",
+      "type": "SubSystem",
+      "pos": [
+        450,
+        110,
+        560,
+        140
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "rotate",
+      "type": "Product",
+      "pos": [
+        190,
+        90,
+        220,
+        130
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "start |V|",
+      "type": "SubSystem",
+      "pos": [
+        190,
+        162,
+        260,
+        188
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "w0",
+      "type": "Constant",
+      "pos": [
+        770,
+        13,
+        825,
+        37
+      ],
+      "orient": "right",
+      "showName": "off",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "z^-1",
+      "type": "Delay",
+      "pos": [
+        840,
+        192,
+        885,
+        243
+      ],
+      "orient": "left",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "th",
+      "type": "Outport",
+      "pos": [
+        1355,
+        148,
+        1385,
+        162
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    },
+    {
+      "name": "f",
+      "type": "Outport",
+      "pos": [
+        1005,
+        8,
+        1035,
+        22
+      ],
+      "orient": "right",
+      "showName": "on",
+      "shape": "",
+      "inputs": "",
+      "tag": ""
+    }
+  ],
+  "areas": [],
+  "trees": [
+    {
+      "src": "1 +",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            965,
+            15
+          ],
+          [
+            1000,
+            15
+          ]
+        ],
+        "dst": "f",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "injection angle",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            1200,
+            155
+          ],
+          [
+            1350,
+            155
+          ]
+        ],
+        "dst": "th",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "dw ÷ w0",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            885,
+            15
+          ],
+          [
+            910,
+            15
+          ]
+        ],
+        "dst": "1 +",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "w0",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            830,
+            25
+          ],
+          [
+            840,
+            25
+          ]
+        ],
+        "dst": "dw ÷ w0",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "angle(V)",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            580,
+            280
+          ],
+          [
+            900,
+            280
+          ],
+          [
+            900,
+            230
+          ],
+          [
+            890,
+            230
+          ]
+        ],
+        "dst": "z^-1",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "e^(-j th)",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            375,
+            220
+          ],
+          [
+            166,
+            220
+          ],
+          [
+            166,
+            120
+          ],
+          [
+            185,
+            120
+          ]
+        ],
+        "dst": "rotate",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "z^-1",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              835,
+              220
+            ],
+            [
+              755,
+              220
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              755,
+              220
+            ],
+            [
+              485,
+              220
+            ]
+          ],
+          "dst": "e^(-j th)",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              755,
+              220
+            ],
+            [
+              755,
+              155
+            ],
+            [
+              770,
+              155
+            ]
+          ],
+          "dst": "angle",
+          "dt": "inport",
+          "dp": 2
+        }
+      ]
+    },
+    {
+      "src": "angle",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              890,
+              140
+            ],
+            [
+              900,
+              140
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              900,
+              140
+            ],
+            [
+              900,
+              205
+            ],
+            [
+              890,
+              205
+            ]
+          ],
+          "dst": "z^-1",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              900,
+              140
+            ],
+            [
+              1070,
+              140
+            ]
+          ],
+          "dst": "injection angle",
+          "dt": "inport",
+          "dp": 1
+        }
+      ]
+    },
+    {
+      "src": "PI",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              700,
+              125
+            ],
+            [
+              740,
+              125
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              740,
+              125
+            ],
+            [
+              770,
+              125
+            ]
+          ],
+          "dst": "angle",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              740,
+              125
+            ],
+            [
+              740,
+              5
+            ],
+            [
+              840,
+              5
+            ]
+          ],
+          "dst": "dw ÷ w0",
+          "dt": "inport",
+          "dp": 1
+        }
+      ]
+    },
+    {
+      "src": "phase detector",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            565,
+            125
+          ],
+          [
+            580,
+            125
+          ]
+        ],
+        "dst": "PI",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "MAF",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            415,
+            125
+          ],
+          [
+            445,
+            125
+          ]
+        ],
+        "dst": "phase detector",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "start |V|",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            265,
+            175
+          ],
+          [
+            278,
+            175
+          ],
+          [
+            278,
+            140
+          ],
+          [
+            295,
+            140
+          ]
+        ],
+        "dst": "MAF",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "rotate",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            225,
+            110
+          ],
+          [
+            295,
+            110
+          ]
+        ],
+        "dst": "MAF",
+        "dt": "inport",
+        "dp": 1
+      }
+    },
+    {
+      "src": "V",
+      "sp": 1,
+      "segs": [
+        {
+          "id": 1,
+          "parent": 0,
+          "points": [
+            [
+              135,
+              100
+            ],
+            [
+              135,
+              100
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 2,
+          "parent": 1,
+          "points": [
+            [
+              135,
+              100
+            ],
+            [
+              185,
+              100
+            ]
+          ],
+          "dst": "rotate",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 3,
+          "parent": 1,
+          "points": [
+            [
+              135,
+              100
+            ],
+            [
+              135,
+              175
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 4,
+          "parent": 3,
+          "points": [
+            [
+              135,
+              175
+            ],
+            [
+              185,
+              175
+            ]
+          ],
+          "dst": "start |V|",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 5,
+          "parent": 3,
+          "points": [
+            [
+              135,
+              175
+            ],
+            [
+              135,
+              280
+            ]
+          ],
+          "dst": "",
+          "dt": "",
+          "dp": 0
+        },
+        {
+          "id": 6,
+          "parent": 5,
+          "points": [
+            [
+              135,
+              280
+            ],
+            [
+              530,
+              280
+            ]
+          ],
+          "dst": "angle(V)",
+          "dt": "inport",
+          "dp": 1
+        },
+        {
+          "id": 7,
+          "parent": 5,
+          "points": [
+            [
+              135,
+              280
+            ],
+            [
+              135,
+              310
+            ],
+            [
+              1047,
+              310
+            ],
+            [
+              1047,
+              170
+            ],
+            [
+              1070,
+              170
+            ]
+          ],
+          "dst": "injection angle",
+          "dt": "inport",
+          "dp": 2
+        }
+      ]
+    },
+    {
+      "src": "V_im",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            55,
+            115
+          ],
+          [
+            70,
+            115
+          ],
+          [
+            70,
+            110
+          ],
+          [
+            85,
+            110
+          ]
+        ],
+        "dst": "V",
+        "dt": "inport",
+        "dp": 2
+      }
+    },
+    {
+      "src": "V_re",
+      "sp": 1,
+      "segs": {
+        "id": 1,
+        "parent": 0,
+        "points": [
+          [
+            55,
+            85
+          ],
+          [
+            65,
+            85
+          ],
+          [
+            65,
+            90
+          ],
+          [
+            85,
+            90
+          ]
+        ],
+        "dst": "V",
+        "dt": "inport",
+        "dp": 1
+      }
+    }
+  ],
+  "system": "PLL"
+}

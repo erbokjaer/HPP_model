@@ -93,8 +93,7 @@ function out = runSweep(setName, opts)
         % network model and other compile-time values are in the rapid target
         inR(k) = in(k).setModelParameter("SimulationMode", "rapid-accelerator", ...
             "RapidAcceleratorUpToDateCheck", "off");
-        in(k) = in(k).setVariable("HPP_network", networkCode(p.net.solverType), "Workspace", "HPP");
-        in(k) = in(k).setVariable("HPP_delays", delayCode, "Workspace", "HPP");
+        in(k) = setVariants(in(k), p, delayCode);              % network, delays, PLL
     end
 
     if rapid
@@ -113,25 +112,22 @@ function out = runSweep(setName, opts)
         else
             % per case: rapidTarget rebuilds only if this case changes a
             % compile-time value (layout, time step, delays, network model)
-            t = tic;
+            pr = Progress("Case set " + setName, numel(in));
+            labels = caseLabels(cases);
             for k = 1:numel(in)
                 st = rapidTarget(ps{k});
                 if ~st.ok, k0 = k; break, end
+                pr.step(labels(k));
                 out(k) = sim(inR(k), "ShowSimulationManager", "off");
-                fprintf("[%s] case %d/%d done (%.0f s)\n", setName, k, numel(in), toc(t));
             end
+            pr.done();
         end
         if k0 <= numel(in)
             rest = k0:numel(in);
             fr = fastRestartPossible(cases(rest, :), fixedDelays);
             how = "";  if fr, how = " with Fast Restart"; end
             fprintf("[%s] cases %d-%d in normal mode%s instead of Rapid Accelerator.\n", setName, k0, numel(in), how);
-            if fr
-                ids = ["Simulink:Engine:NonTunableVarChangedInFastRestart", ...
-                       "Simulink:Engine:NonTunableVarChangedMaxWarnings"];
-                old = arrayfun(@(i) warning("off", i), ids);
-                restore = onCleanup(@() warning(old)); %#ok<NASGU>
-            end
+            if fr, restore = quietFastRestart(); end %#ok<NASGU>
             out(rest) = sim(in(rest), "ShowProgress", "on", "UseFastRestart", onOff(fr));
         end
         saveSweep(opts.Save, out, cases, setName);
@@ -139,13 +135,8 @@ function out = runSweep(setName, opts)
     end
 
     if opts.FastRestart
-        % the compile-time values in p (layout, time step, maxDelay) are
-        % equal in all cases (checkTunable), so the warnings that p changed
-        % in non-tunable parameters are expected
-        ids = ["Simulink:Engine:NonTunableVarChangedInFastRestart", ...
-               "Simulink:Engine:NonTunableVarChangedMaxWarnings"];
-        old = arrayfun(@(i) warning("off", i), ids);
-        restore = onCleanup(@() warning(old));
+        % the compile-time values in p are equal in all cases (checkTunable)
+        restore = quietFastRestart(); %#ok<NASGU>
     end
     if opts.UseParallel
         % parsim always uses a parallel pool (starts one if needed)
@@ -160,11 +151,7 @@ end
 
 function saveSweep(doSave, out, cases, setName)
     if ~doSave, return, end
-    folder = fullfile(currentProject().RootFolder, "results", setName);
-    if ~isfolder(folder)
-        mkdir(folder);
-    end
-    f = fullfile(folder, "sweep.mat");
+    f = fullfile(resultsFolder(setName, true), "sweep.mat");
     save(f, "out", "cases", "setName");
     fprintf("Saved %s\n", f);
 end
@@ -186,10 +173,11 @@ end
 
 function checkTunable(cases, setName, fixedDelays)
     % Fast Restart keeps the compiled model: values that are fixed at
-    % compile time (layout, time step, size of the delay buffers, delay
-    % mode, network model; with fixed delays also the delays) would
-    % silently keep their first value. Refuse case sets that change them.
-    exact  = ["net.solverType", "sim.Ts", "comm.maxDelay", "comm.delays"];
+    % compile time (compileSignature: layout, time step, size of the delay
+    % buffers, delay mode, network model, PLL variant; with fixed delays
+    % also the delays) would silently keep their first value. Refuse case
+    % sets that change them.
+    exact  = ["net.solverType", "pll.type", "sim.Ts", "comm.maxDelay", "comm.delays"];
     suffix = [".nFeeders", ".nPerFeeder", ".N"];
     cols = string(cases.Properties.VariableNames);
     bad = cols(arrayfun(@(c) any(c == exact) || any(endsWith(c, suffix)) || ...

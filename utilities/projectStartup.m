@@ -5,6 +5,7 @@
 
 p = HPP_parameters();
 fprintf("HPP_model: loaded default parameters into 'p' (variant: %s)\n", p.meta.variant);
+HPP_pll = p.pll.type;   % PLL variant of every PLL subsystem (runs from the editor); runCase sets it per run
 
 % Close any open Editor tabs, then open the entry script and README
 % (interactive sessions only, so batch/HPC runs are unaffected).

@@ -36,13 +36,18 @@ function I = modelInterfaces()
 
     % asset controllers (inside the asset models); the terminal voltage
     % phasor (V_re, V_im) feeds their PLL, which gives the angle of the
-    % current injection (pll_c, pll_s) and the asset frequency f_pll
+    % current injection (th_pll, rad) and the asset frequency f_pll
     assetCtrlIn = ["P_set", "Q_set", "V_term", "P_meas", "Q_meas"];
-    assetCtrlOut = ["ip_cmd", "iq_cmd", "P_avail", "pll_c", "pll_s", "f_pll"];
+    assetCtrlOut = ["ip_cmd", "iq_cmd", "P_avail", "th_pll", "f_pll"];
     pllIn = ["V_re", "V_im"];
     I.WT_ctrl   = iface("ctrl", [assetCtrlIn, "P_wind_avail", pllIn], assetCtrlOut, "par", "ctrl.wt.par");
     I.PV_ctrl   = iface("ctrl", [assetCtrlIn, "P_pv_avail", pllIn],   assetCtrlOut, "par", "ctrl.pv.par");
     I.BESS_ctrl = iface("ctrl", [assetCtrlIn, "SOC", pllIn],          assetCtrlOut, "par", "ctrl.bess.par");
+
+    % PLL (stage 7, in the asset controllers and FreqMeter) and the
+    % controllers' frequency meter (in the plant and HPP subsystems)
+    I.PLL       = iface("ctrl", ["V_re", "V_im"], ["th", "f"], "pll", "pll.asset");
+    I.FreqMeter = iface("ctrl", ["V_re", "V_im", "f_sys"], ["f", "RoCoF"], "m", "pll.hppc");
 
     % asset models (plant side)
     assetIn = ["P_set", "Q_set", "V_re", "V_im"];

@@ -5,6 +5,10 @@ function st = rapidTarget(p, opts)
 %                                    values in p
 %   st = rapidTarget(p, Force=true)  always rebuild
 %   st = rapidTarget(p, Strict=true) error on checkModels findings
+%   st = rapidTarget(p, Verbose=true) print Simulink's build log too
+%
+%   A build shows its progress (Progress: the duration of the last build
+%   as an estimate; Simulink reports no progress while it compiles).
 %
 %   Returns a status struct: st.ok (true: run in Rapid Accelerator), st.reason
 %   (why not, when st.ok is false) and st.built (true if built in this call).
@@ -43,6 +47,7 @@ function st = rapidTarget(p, opts)
         p (1,1) struct
         opts.Force (1,1) logical = false
         opts.Strict (1,1) logical = false
+        opts.Verbose (1,1) logical = false
     end
     persistent lastKey lastStatus
     if p.comm.delays == "auto"
@@ -51,9 +56,7 @@ function st = rapidTarget(p, opts)
 
     % Rapid Accelerator cannot run while the model is in Fast Restart (e.g.
     % after a normal-mode run with FastRestart=true): switch it off first
-    if bdIsLoaded("HPP") && strcmp(get_param("HPP", "FastRestart"), "on")
-        set_param("HPP", "FastRestart", "off");
-    end
+    fastRestartOff();
 
     key = struct("sig", compileSignature(p), "models", modelStamp(), ...
         "noCompilerHook", getenv("HPP_TEST_NO_COMPILER"));
@@ -92,7 +95,7 @@ function st = rapidTarget(p, opts)
                 "(first: %s)", height(expr), expr.Block(1));
         else
             try
-                buildTarget(p);
+                buildTarget(p, opts.Verbose);
                 st.ok = true;  st.built = true;
                 save(keyFile, "key");                     % fingerprint for later sessions
             catch err
@@ -107,38 +110,51 @@ function st = rapidTarget(p, opts)
     lastKey = key;  lastStatus = st;
 end
 
-function buildTarget(p)
+function buildTarget(p, verbose)
     load_system("HPP");
-    if strcmp(get_param("HPP", "FastRestart"), "on")
-        set_param("HPP", "FastRestart", "off");          % Fast Restart and Rapid Accelerator exclude each other
-    end
-    % the build reads p from the base workspace and the network choice from
-    % the model workspace; put them there for the build and restore afterwards
+    fastRestartOff();                                    % Fast Restart and Rapid Accelerator exclude each other
+    % the build reads p from the base workspace and the variant choices
+    % (variantVars) from the model workspace or as globals; put them there
+    % for the build and restore afterwards
     hadP = evalin("base", "exist('p', 'var') == 1");
     pOld = [];
     if hadP, pOld = evalin("base", "p"); end
     assignin("base", "p", p);
     restoreP = onCleanup(@() restoreBase(hadP, pOld)); %#ok<NASGU>
     ws = get_param("HPP", "ModelWorkspace");
-    netOld = getVariable(ws, "HPP_network");
-    assignin(ws, "HPP_network", networkCode(p.net.solverType));
-    restoreNet = onCleanup(@() assignin(ws, "HPP_network", netOld)); %#ok<NASGU>
-    delOld = getVariable(ws, "HPP_delays");
     [~, dc] = delayMode(p, table());
-    assignin(ws, "HPP_delays", dc);
-    restoreDel = onCleanup(@() assignin(ws, "HPP_delays", delOld)); %#ok<NASGU>
+    restore = {};
+    for v = variantVars(p, dc)
+        if v.where == "global"
+            had = evalin("base", "exist('" + v.name + "', 'var') == 1");  old = [];
+            if had, old = evalin("base", v.name); end
+            assignin("base", v.name, v.value);
+            restore{end+1} = onCleanup(@() restoreBaseVar(v.name, had, old)); %#ok<AGROW>
+        else
+            old = getVariable(ws, v.name);
+            assignin(ws, v.name, v.value);
+            restore{end+1} = onCleanup(@() assignin(ws, v.name, old)); %#ok<AGROW>
+        end
+    end
 
-    fprintf("Building the Rapid Accelerator target of HPP (once per layout / model change) ...\n");
-    t = tic;
+    % one step: Simulink reports no progress while it compiles; the estimate
+    % is last build's duration. Verbose: Simulink's own build log as well
+    set_param("HPP", "AccelVerboseBuild", onOff(verbose));
+    pr = Progress("Rapid Accelerator build of HPP", 0);
+    pr.step("code generation and C compilation (once per layout / model change)");
     Simulink.BlockDiagram.buildRapidAcceleratorTarget("HPP");
-    fprintf("Rapid Accelerator target built in %.0f s\n", toc(t));
+    pr.done();
 end
 
 function restoreBase(hadP, pOld)
-    if hadP
-        assignin("base", "p", pOld);
+    restoreBaseVar("p", hadP, pOld);
+end
+
+function restoreBaseVar(name, had, old)
+    if had
+        assignin("base", name, old);
     else
-        evalin("base", "clear p");
+        evalin("base", "clear " + name);
     end
 end
 
@@ -149,8 +165,6 @@ function s = modelStamp()
     s = max([d.datenum]);
 end
 
-function sig = compileSignature(p)
-    % same compile-time values as runCase's Fast Restart check
-    sig = struct("N", [p.wt.N, p.pv.N, p.bess.N], "Ts", p.sim.Ts, ...
-        "delays", delaySignature(p), "network", p.net.solverType);
+function s = onOff(b)
+    if b, s = "on"; else, s = "off"; end
 end

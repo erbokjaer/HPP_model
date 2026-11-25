@@ -25,7 +25,7 @@ function [out, cases] = loadResults(source, caseId)
     end
 
     setName = string(source);
-    folder = fullfile(currentProject().RootFolder, "results", setName);
+    folder = resultsFolder(setName);
     if ~isfolder(folder)
         error("loadResults:noResults", ...
               "No results for ""%s"". Run runSweep(""%s"") or runCase(""%s"", ...) first.", ...
@@ -34,7 +34,7 @@ function [out, cases] = loadResults(source, caseId)
 
     % One case
     if ~isempty(caseId)
-        k = caseIndex(setName, caseId);
+        k = selectCase(defineCases(setName), caseId, setName);
         f = fullfile(folder, sprintf("case_%03d.mat", k));
         if ~isfile(f)
             error("loadResults:noCase", "No saved result %s. Run runCase(""%s"", %d) first.", ...
@@ -66,17 +66,4 @@ function [out, cases] = loadResults(source, caseId)
         rows{i} = L.caseInfo.row;
     end
     cases = vertcat(rows{:});
-end
-
-function k = caseIndex(setName, caseId)
-    if isnumeric(caseId)
-        k = caseId;
-        return
-    end
-    names = string(defineCases(setName).Properties.RowNames);
-    k = find(names == string(caseId), 1);
-    if isempty(k)
-        error("loadResults:badName", "Case set ""%s"" has no case named ""%s"".", ...
-              setName, string(caseId));
-    end
 end
