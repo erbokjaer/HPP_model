@@ -98,7 +98,7 @@ function buildHPP(opts)
     % asset controllers and the plant / HPP subsystems), controllers before
     % assets (assets reference the asset controllers), the top model last;
     % created if missing, then maintained in Simulink (Overwrite: rebuilt)
-    jobs = strings(0, 1);
+    jobs = strings(1, 0);       % a row: a for loop over an empty 0x1 column runs once
     if opts.All
         names = ["PLL", "FreqMeter", "HPPC", "WPPC", "SPPC", "BESSC", "WT_ctrl", "PV_ctrl", "BESS_ctrl", ...
                  "WT_asset", "PV_asset", "BESS_asset"];
@@ -112,7 +112,8 @@ function buildHPP(opts)
             end
         end
     end
-    pr = Progress("Building the HPP models", numel(jobs) + 1);
+    % the number of models in the title: the estimate is kept per title
+    pr = Progress(sprintf("Building %d HPP model(s)", numel(jobs) + 1), numel(jobs) + 1);
     for nm = jobs
         pr.step(nm);
         switch nm
