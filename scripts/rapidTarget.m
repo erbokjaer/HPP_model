@@ -26,8 +26,10 @@ function st = rapidTarget(p, opts)
 %   network: its mode, phasor or EMT, simscapeMode), a model file in
 %   models/ (after buildHPP or an edit), or the structure of p (field
 %   names, classes and sizes, e.g. after a new parameter: a target only
-%   accepts a p of the type it was built with). Every build starts from an
-%   empty target folder (an older target there would keep the old type of p). p.comm.delays = "auto" counts as
+%   accepts a p of the type it was built with; the referenced models' targets
+%   are then rebuilt too, as their arguments ap / par may have changed). Every
+%   build starts from an empty target folder (an older target there would keep
+%   the old type of p). p.comm.delays = "auto" counts as
 %   "fixed" here (runCase / runSweep resolve it per case set, delayMode). The
 %   fingerprint of these is saved next to the target
 %   (hpp_rapid_fingerprint.mat), so a new MATLAB session reuses an unchanged
@@ -91,10 +93,22 @@ function st = rapidTarget(p, opts)
             st.reason = sprintf("checkModels found %d block parameter(s) that compiled code cannot keep tunable " + ...
                 "(first: %s)", height(expr), expr.Block(1));
         else
+            % the referenced models' targets (assets, controllers) take parts of
+            % p as model arguments (ap, par); Simulink's up-to-date check
+            % misses a change in their structure ("Fields of structure 'ap.conv'
+            % do not match"), so they are rebuilt when the type of p differs
+            % from the last successful build (file outside the target folder,
+            % which removeOldTarget empties)
+            typeFile = fullfile(Simulink.fileGenControl("get", "CacheFolder"), "hpp_rapid_ptype.mat");
+            refsStale = ~isfile(typeFile);
+            if ~refsStale
+                S = load(typeFile, "ptype");  refsStale = ~isequal(S.ptype, key.ptype);
+            end
             try
-                buildTarget(p, opts.Verbose);
+                buildTarget(p, opts.Verbose, refsStale);
                 st.ok = true;  st.built = true;
                 save(keyFile, "key");                     % fingerprint for later sessions
+                ptype = key.ptype;  save(typeFile, "ptype");
             catch err
                 msg = strtrim(string(err.message));  msg = extractBefore(msg + newline, newline);
                 st.reason = "the build failed: " + msg;
@@ -107,9 +121,12 @@ function st = rapidTarget(p, opts)
     lastKey = key;  lastStatus = st;
 end
 
-function buildTarget(p, verbose)
+function buildTarget(p, verbose, refsStale)
     load_system("HPP");
     fastRestartOff();                                    % Fast Restart and Rapid Accelerator exclude each other
+    if refsStale
+        removeRefTargets();                              % rebuilt in this build
+    end
     % the build reads p from the base workspace and the variant choices
     % (variantVars) from the model workspace or as globals; put them there
     % for the build and restore afterwards
@@ -170,6 +187,21 @@ function removeOldTarget()
     if isfolder(folder), rmdir(folder, "s"); end
     slxc = fullfile(cache, "HPP.slxc");
     if isfile(slxc), delete(slxc); end
+end
+
+function removeRefTargets()
+    % the simulation targets of all models HPP references (slprj/sim/<model>)
+    % and their Simulink cache files, so the build rebuilds them (Simulink's
+    % recommended way; UpdateModelReferenceTargets = "Force" is deprecated).
+    % The <model>_msf.mexw64 files stay: the build overwrites them.
+    cache = Simulink.fileGenControl("get", "CacheFolder");
+    refs = string(find_mdlrefs("HPP", "MatchFilter", @Simulink.match.allVariants, "ReturnTopModelAsLastElement", false));
+    for r = refs(:)'
+        d = fullfile(cache, "slprj", "sim", r);
+        if isfolder(d), rmdir(d, "s"); end
+        f = fullfile(cache, r + ".slxc");
+        if isfile(f), delete(f); end
+    end
 end
 
 function s = typeSignature(x)
