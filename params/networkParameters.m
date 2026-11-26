@@ -26,6 +26,16 @@ function net = networkParameters()
     %   "nodal":    the nodal solver Z = inv(Y) (networkSolverData, buildNetwork)
     net.solverType = "nodal";
 
+    % Mode of the Simscape network (compile-time, in compileSignature; each
+    % mode has its own Rapid Accelerator target). Same network, only the
+    % Solver Configuration differs (docs/design.md, section 14.9):
+    %   "phasor": frequency-and-time mode, local solver step p.sim.Ts
+    %   "emt":    time mode (three-phase instantaneous), local solver step
+    %             net.emtTs; the measured voltage phasors pass a one-cycle
+    %             moving average, so EMT ripple stays out of the controllers
+    net.simscapeMode = "phasor";
+    net.emtTs = 50e-6;        % [s]  local solver step in EMT mode (p.sim.Ts must be a multiple)
+
     % ---- wind: 0.69/10 kV turbines on 10 kV feeders, 10/33 kV wind transformer ----
     net.wt.Vcol  = 10e3;                                            % [V] collector voltage
     net.wt.unit  = struct("S", 5.6e6, "uk", 0.07, "XR", 7);         % per turbine, 0.69/10 kV

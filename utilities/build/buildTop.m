@@ -15,7 +15,7 @@ function buildTop(p, folder)
     m = "HPP";
     closeIfLoaded(m);
     new_system(m);
-    set_param(m, "SolverType", "Fixed-step", "Solver", "ode1", "FixedStep", "p.sim.Ts", ...
+    set_param(m, "SolverType", "Fixed-step", "Solver", "ode1", "FixedStep", "HPP_Tnet", ...   % netSolverStep(p): p.sim.Ts; Simscape EMT p.net.emtTs
         "SolverMode", "SingleTasking", "Decimation", "p.sim.logDecimation", ...
         "StopTime", "p.sim.Tstop", "SaveOutput", "on", "SignalLogging", "on", ...
         "AlgebraicLoopMsg", "error", ...
@@ -113,10 +113,13 @@ function buildTop(p, folder)
     ws = get_param(m, "ModelWorkspace");
     assignin(ws, "buildInfo", struct("N_wt", p.wt.N, "N_pv", p.pv.N, "N_bess", p.bess.N, ...
         "built", string(datetime("now"))));
-    % active network variant for runs started from the editor (runCase sets it per run)
-    assignin(ws, "HPP_network", networkCode(p.net.solverType));
+    % variant choices (network, Simscape mode, delays) and compile-time values
+    % (HPP_Ts, HPP_Tnet, HPP_f0) for runs started from the editor; runCase /
+    % runSweep / rapidTarget set them per run (variantVars)
     [~, dc] = delayMode(p, table());
-    assignin(ws, "HPP_delays", dc);
+    for v = variantVars(p, dc)
+        if v.where ~= "global", assignin(ws, v.name, v.value); end
+    end
     save_system(m, fullfile(folder, "HPP.slx"));
     fprintf("Built HPP.slx with N = %d wind, %d PV, %d BESS asset instances.\n", p.wt.N, p.pv.N, p.bess.N);
 end
@@ -972,8 +975,9 @@ end
 %  (buses I_re, I_im, system pu); out 1 network bus (V_re, V_im of every
 %  asset terminal one step old, P_plant / Q_plant [W / var], V_bus, f),
 %  out 2 POC bus (P_poc, Q_poc, V_poc).
-%  Inside: standard three-phase blocks solved in frequency-and-time mode
-%  (phasors around 50 Hz), one Solver Configuration:
+%  Inside: standard three-phase blocks, one Solver Configuration (variant:
+%  phasor = frequency-and-time mode at p.sim.Ts, EMT = time mode at
+%  p.net.emtTs, HPP_simscape / p.net.simscapeMode):
 %    converter interface -- unit impedance (series R-L, unit transformer
 %    referred to the collector voltage) -- pi feeder segments -- plant
 %    node (wind: 10/33 kV transformer) -- plant meter -- 33 kV HPP bus --
@@ -984,7 +988,7 @@ end
 function buildNetworkVariants(sys, p)
     % Variant Subsystem "Network" with the two network models as choices:
     %   Nodal    (HPP_network == 1): nodal solver Z = inv(Y), fast
-    %   Simscape (HPP_network == 2): Simscape Electrical, frequency-and-time mode
+    %   Simscape (HPP_network == 2): Simscape Electrical, phasor or EMT mode (HPP_simscape)
     % Both have the same ports. The variant control variable HPP_network is
     % set per run by runCase (networkCode(p.net.solverType)); the default for
     % runs from the editor is in the model workspace. Activation at update
@@ -1009,7 +1013,7 @@ function buildNetworkVariants(sys, p)
     add_block("simulink/Sinks/Out1", sys + "/POC meas", "Port", "2", "Position", [520 120 550 134]);
     set_param(sys, "VariantActivationTime", "update diagram", "Description", ...
         "Network model, chosen per run: Nodal (HPP_network = 1, fast nodal solver) or Simscape " + ...
-        "(HPP_network = 2, Simscape Electrical in frequency-and-time mode). See runCase, option Network.");
+        "(HPP_network = 2, Simscape Electrical, phasor or EMT mode by HPP_simscape). See runCase, option Network.");
 end
 
 % ---------------------------------------------------------------------
@@ -1294,7 +1298,7 @@ function buildNetworkSimscape(sys, p)
         add_block("simulink/Signal Routing/Bus Selector", sys + "/I sel " + tags(t), "OutputSignals", "I_re,I_im", ...
             "ShowName", "off", "Position", [0 0 6 50]);
     end
-    add_block("simulink/Sources/Digital Clock", sys + "/clock", "SampleTime", "p.sim.Ts", "Position", [0 0 40 24]);
+    add_block("simulink/Sources/Digital Clock", sys + "/clock", "SampleTime", "HPP_Ts", "Position", [0 0 40 24]);
     rows = {};  k0 = 0;
     for t = 1:3
         n = N(t);  ks = k0 + (1:n);
@@ -1430,7 +1434,7 @@ function buildNetworkSimscape(sys, p)
     alignPhys(sys + "/grid Zg", mp(1) + 180, mp(2));
     PL(H("POC meter").RConn(1), H("grid Zg").LConn(1));
     add_block(lib("Sources/Controlled Voltage Source (Three-Phase)"), sys + "/grid E", "input_option", ...
-        "ee.enum.inputType.singleFreqAC", "FRated", f0, "Orientation", "left", "Position", [0 0 80 80]);
+        "ee.enum.inputType.singleFreqAC", "FRated", "HPP_f0", "Orientation", "left", "Position", [0 0 80 80]);
     zp = get_param(H("grid Zg").RConn(1), "Position");
     ep = get_param(sys + "/grid E", "Position");  er = get_param(H("grid E").RConn(1), "Position");
     set_param(sys + "/grid E", "Position", ep + [zp(1) + 60 - ep(1), zp(2) - er(2), zp(1) + 60 - ep(1), zp(2) - er(2)]);
@@ -1486,9 +1490,7 @@ function buildNetworkSimscape(sys, p)
             blks = [blks, gr]; %#ok<AGROW>
         end
     end
-    add_block("nesl_utility/Solver Configuration", sys + "/solver", "EquationFormulation", "NE_FREQUENCY_TIME_EF", ...
-        "UseLocalSolver", "on", "LocalSolverChoice", "NE_BACKWARD_EULER_ADVANCER", "LocalSolverSampleTime", "p.sim.Ts", ...
-        "DoFixedCost", "on", "MaxNonlinIter", "1", "Position", [xH + 160, yV + 170, xH + 220, yV + 200]);
+    solverVariant(sys + "/solver", [xH + 160, yV + 170, xH + 220, yV + 200]);
     blks = [blks, "solver", nodeLabel(sys, "HPP_bus", H("solver").RConn(1), "right")];
     hV = areaAround(sys, "Bus and POC voltages, solver configuration", blks, areaColor("interface"));
     ep = get_param(sys + "/grid E", "Position");
@@ -1519,10 +1521,85 @@ function buildNetworkSimscape(sys, p)
     nameInputs(sys + "/network bus", ["V_re", "V_im", "P_plant", "Q_plant", "V_bus", "f", "V_bus_re", "V_bus_im"]);
     nameInputs(sys + "/POC bus", ["P_poc", "Q_poc", "V_poc", "V_poc_re", "V_poc_im"]);
     alignColumns(hIn, {hMid, [hDip, hGrid, hV]}, hOut);
-    set_param(sys, "Description", "Network as a Simscape Electrical model in frequency-and-time mode " + ...
+    set_param(sys, "Description", "Network as a Simscape Electrical model in phasor (frequency-and-time) or EMT mode " + ...
         "(buildNetworkSimscape). Same ports as the nodal network. Electrical nodes are joined by " + ...
         "Connection Labels (collector, tap, HPP bus, POC); signals by local Goto/From.");
     hideStructuralNames(sys);
+end
+
+function solverVariant(vs, pos)
+    % Solver Configuration of the Simscape network as a Variant Subsystem,
+    % chosen per run by HPP_simscape (simscapeMode, p.net.simscapeMode):
+    %   Phasor (1): frequency-and-time mode, local solver step p.sim.Ts
+    %   EMT    (2): time mode, local solver step p.net.emtTs (the model's
+    %               fixed step netSolverStep(p) follows)
+    % Both: fixed-step local backward Euler solver, fixed cost.
+    add_block("simulink/Ports & Subsystems/Variant Subsystem", vs, "Position", pos);
+    for b = string(find_system(vs, "SearchDepth", 1, "MatchFilter", @Simulink.match.allVariants, "Type", "Block"))'
+        if b ~= vs, delete_block(b); end
+    end
+    L = find_system(vs, "SearchDepth", 1, "FindAll", "on", "Type", "line");
+    if ~isempty(L), delete_line(L); end
+    add_block("nesl_utility/Connection Port", vs + "/~", "Side", "Right", "Position", [300 60 330 80]);
+    names = ["Phasor", "EMT"];  ef = ["NE_FREQUENCY_TIME_EF", "NE_TIME_EF"];  ts = ["HPP_Tnet", "HPP_Tnet"];   % netSolverStep(p)
+    for j = 1:2
+        c = vs + "/" + names(j);
+        add_block("built-in/Subsystem", c, "Position", [100, 30 + 80*(j-1), 200, 80 + 80*(j-1)]);
+        add_block("nesl_utility/Solver Configuration", c + "/solver", "EquationFormulation", ef(j), ...
+            "UseLocalSolver", "on", "LocalSolverChoice", "NE_BACKWARD_EULER_ADVANCER", "LocalSolverSampleTime", ts(j), ...
+            "DoFixedCost", "on", "MaxNonlinIter", "1", "Position", [60 50 120 80]);
+        add_block("nesl_utility/Connection Port", c + "/~", "Side", "Right", "Position", [220 55 250 75]);
+        h = @(x) get_param(c + "/" + x, "PortHandles");
+        add_line(c, h("solver").RConn(1), h("~").RConn(1));
+        set_param(c, "VariantControl", "HPP_simscape == " + j);
+    end
+    set_param(vs, "VariantActivationTime", "update diagram", "Description", ...
+        "Simscape solver, chosen per run by HPP_simscape (p.net.simscapeMode): Phasor (1, frequency-and-time " + ...
+        "mode, step p.sim.Ts) or EMT (2, time mode, step p.net.emtTs). See simscapeMode.");
+end
+
+function phasorFilterVariant(vs, pos)
+    % one-cycle moving average of the voltage phasor (re, im) in EMT mode,
+    % so the EMT ripple (unbalance, harmonics, transients) stays out of the
+    % controllers; a pass-through in phasor mode (HPP_simscape == 1). The
+    % phasor runs at p.sim.Ts, so the window is round(1 / (f0 Ts)) samples.
+    add_block("simulink/Ports & Subsystems/Variant Subsystem", vs, "Position", pos);
+    for b = string(find_system(vs, "SearchDepth", 1, "MatchFilter", @Simulink.match.allVariants, "Type", "Block"))'
+        if b ~= vs, delete_block(b); end
+    end
+    L = find_system(vs, "SearchDepth", 1, "FindAll", "on", "Type", "line");
+    if ~isempty(L), delete_line(L); end
+    io = ["re", "im"];
+    for j = 1:2
+        add_block("simulink/Sources/In1", vs + "/" + io(j) + " in", "Port", num2str(j), "Position", [20 40*j 50 40*j+14]);
+        add_block("simulink/Sinks/Out1", vs + "/" + io(j), "Port", num2str(j), "Position", [400 40*j 430 40*j+14]);
+    end
+    names = ["None", "MAF"];
+    nW = "round(1/(HPP_f0*HPP_Ts))";
+    for k = 1:2
+        c = vs + "/" + names(k);
+        add_block("built-in/Subsystem", c, "Position", [150, 30 + 90*(k-1), 280, 100 + 90*(k-1)]);
+        for j = 1:2
+            add_block("simulink/Sources/In1", c + "/" + io(j) + " in", "Port", num2str(j), "Position", [20 40*j 50 40*j+14]);
+            add_block("simulink/Sinks/Out1", c + "/" + io(j), "Port", num2str(j), "Position", [300 40*j 330 40*j+14]);
+            if k == 1
+                add_line(c, io(j) + " in/1", io(j) + "/1");
+            else
+                % the window starts filled with the nominal phasor (1, 0 pu),
+                % not with zeros: an empty window would show the controllers
+                % no voltage for the first cycle (a start-up artefact)
+                add_block("simulink/Discrete/Discrete FIR Filter", c + "/MAF " + io(j), "Coefficients", ...
+                    "ones(1," + nW + ")/" + nW, "InitialStates", string(double(j == 1)), ...
+                    "SampleTime", "-1", "Position", [120 40*j-8 200 40*j+22]);
+                add_line(c, io(j) + " in/1", "MAF " + io(j) + "/1");
+                add_line(c, "MAF " + io(j) + "/1", io(j) + "/1");
+            end
+        end
+        set_param(c, "VariantControl", "HPP_simscape == " + k);
+    end
+    set_param(vs, "VariantActivationTime", "update diagram", "Description", ...
+        "Voltage phasor filter, chosen per run by HPP_simscape: None (1, phasor mode) or MAF (2, EMT: " + ...
+        "moving average over one cycle at p.sim.Ts, starting from the nominal phasor 1 + 0j pu).");
 end
 
 function alignPhys(blk, x, yPort)
@@ -1578,7 +1655,7 @@ function trBlock(sys, name, d, V1, V2, pos, lib)
     % from d.Rm, d.Xm (needed in frequency-and-time mode; same branch in the nodal model)
     r = "(" + d + ".uk/sqrt(1+" + d + ".XR^2))";
     add_block(lib("Passive/Transformers/Two-Winding Transformer (Three-Phase)"), sys + "/" + name, ...
-        "SRated", d + ".S", "FRated", "p.grid.f0", "VRated1", V1, "VRated2", V2, ...
+        "SRated", d + ".S", "FRated", "HPP_f0", "VRated1", V1, "VRated2", V2, ...
         "Winding1Connection", "ee.enum.windingconnection.Yg", "Winding2Connection", "ee.enum.windingconnection.Yg", ...
         "pu_Rw1", r + "/2", "pu_Rw2", r + "/2", "leakage_reactance_option", "ee.enum.transformer_leakage.include", ...
         "pu_Xl1", r + "*" + d + ".XR/2", "pu_Xl2", r + "*" + d + ".XR/2", ...
@@ -1623,18 +1700,25 @@ function meterBlock(sys, name, pos, lib)
     % (right); outputs P [W], Q [var] flowing from a to b
     b = sys + "/" + name;
     add_block("built-in/Subsystem", b, "Position", pos);
-    add_block(lib("Sensors & Transducers/Power Sensor (Three-Phase)"), b + "/PQ", "f0", "p.grid.f0", "Position", [200 100 260 160]);
+    add_block(lib("Sensors & Transducers/Power Sensor (Three-Phase)"), b + "/PQ", "f0", "HPP_f0", "Position", [200 100 260 160]);
     add_block("nesl_utility/Connection Port", b + "/a", "Side", "Left", "Position", [100 120 130 140]);
     add_block("nesl_utility/Connection Port", b + "/b", "Side", "Right", "Position", [330 120 360 140]);
     for j = 1:2
         n = ["P", "Q"];
         add_block("nesl_utility/PS-Simulink Converter", b + "/" + n(j) + " out", "Position", [200+60*(j-1) 30 220+60*(j-1) 50]);
-        add_block("simulink/Sinks/Out1", b + "/" + n(j), "Port", num2str(j), "Position", [200+60*(j-1) -20 230+60*(j-1) -6]);
+        add_block("simulink/Sinks/Out1", b + "/" + n(j), "Port", num2str(j), "Position", [200+60*(j-1) -50 230+60*(j-1) -36]);
     end
     h = @(x) get_param(b + "/" + x, "PortHandles");
     add_line(b, h("a").RConn(1), h("PQ").LConn(1));  add_line(b, h("b").RConn(1), h("PQ").RConn(1));
     add_line(b, h("PQ").LConn(2), h("P out").LConn(1));  add_line(b, h("PQ").LConn(3), h("Q out").LConn(1));
-    add_line(b, "P out/1", "P/1");  add_line(b, "Q out/1", "Q/1");
+    % P, Q sampled at p.sim.Ts (EMT mode: the local solver runs faster; in
+    % phasor mode the hold is a pass-through)
+    for j = 1:2
+        n = ["P", "Q"];
+        add_block("simulink/Discrete/Zero-Order Hold", b + "/" + n(j) + " hold", "SampleTime", "HPP_Ts", ...
+            "Position", [200+60*(j-1) -5 220+60*(j-1) 15]);
+        add_line(b, n(j) + " out/1", n(j) + " hold/1");  add_line(b, n(j) + " hold/1", n(j) + "/1");
+    end
     set_param(b, "BackgroundColor", "[0.95 0.95 0.95]");
 end
 
@@ -1646,7 +1730,7 @@ function vMeterBlock(sys, name, Vn, pos, lib)
     add_block(lib("Sensors & Transducers/Phase Voltage Sensor (Three-Phase)"), b + "/Vs", "Position", [100 50 140 90]);
     add_block(lib("Connectors & References/Grounded Neutral (Three-Phase)"), b + "/gn", "Position", [100 130 130 145]);
     add_block("nesl_utility/PS-Simulink Converter", b + "/v", "Position", [180 60 200 80]);
-    add_block("simulink/Sources/Digital Clock", b + "/clock", "SampleTime", "p.sim.Ts", "Position", [180 110 200 130]);
+    add_block("simulink/Sources/Digital Clock", b + "/clock", "SampleTime", "HPP_Ts", "Position", [180 110 200 130]);
     addPhasor(b, [240 50 340 130], Vn);
     add_block("simulink/Math Operations/Math Function", b + "/abs", "Operator", "hypot", "Position", [380 60 420 100]);
     add_block("simulink/Sinks/Out1", b + "/V", "Port", "1", "Position", [460 75 490 89]);
@@ -1682,7 +1766,7 @@ function convBlock(sys, name, Ib, Vn, pos, lib)
     add_block("nesl_utility/Simulink-PS Converter", b + "/I in", "Unit", "A", "Position", [260 40 280 60]);
     add_block("nesl_utility/Simulink-PS Converter", b + "/ph in", "Unit", "rad", "Position", [260 80 280 100]);
     add_block(lib("Sources/Controlled Current Source (Three-Phase)"), b + "/source", "input_option", ...
-        "ee.enum.inputType.singleFreqAC", "FRated", "p.grid.f0", "Position", [320 30 400 110]);
+        "ee.enum.inputType.singleFreqAC", "FRated", "HPP_f0", "Position", [320 30 400 110]);
     add_block(sprintf("ee_lib/Connectors &\nReferences/Electrical Reference"), b + "/gnd", "Position", [330 140 350 160]);
     add_block("nesl_utility/Connection Port", b + "/~", "Side", "Right", "Position", [500 60 530 80]);
     add_block(lib("Sensors & Transducers/Phase Voltage Sensor (Three-Phase)"), b + "/Vs", "Position", [440 150 480 190]);
@@ -1709,7 +1793,8 @@ function body = phasorBody()
     % rotated by +90 deg so the grid source is at angle 0 (sine reference
     % of the library), scaled to pu of the nominal line voltage Vn
     body = [
-        "% space phasor at the nominal frequency: exact phasor in frequency-and-time mode"
+        "% space phasor at the nominal frequency: exact phasor in frequency-and-time mode;"
+        "% in time (EMT) mode the instantaneous space phasor (filtered after this block)"
         "a = complex(-0.5, sqrt(3)/2);"
         "s = 2/3*(v(1) + a*v(2) + a^2*v(3)) * exp(complex(0, pi/2 - w0*t));"
         "V = s * sqrt(3/2) / Vn;"
@@ -1718,9 +1803,25 @@ function body = phasorBody()
 end
 
 function addPhasor(b, pos, Vn)
-    % MATLAB Function "phasor" (inputs v, t, Vn, w0) with constants for Vn and w0
-    addMatlabFunction(b + "/phasor", "phasor", ["v", "t", "Vn", "w0"], ["V_re", "V_im"], phasorBody(), "", pos);
-    add_block("simulink/Sources/Constant", b + "/Vn", "Value", Vn, "Position", [pos(1)-90 pos(4)+10 pos(1)-30 pos(4)+30]);
-    add_block("simulink/Sources/Constant", b + "/w0", "Value", "2*pi*p.grid.f0", "Position", [pos(1)-90 pos(4)+40 pos(1)-30 pos(4)+60]);
-    add_line(b, "Vn/1", "phasor/3");  add_line(b, "w0/1", "phasor/4");
+    % Subsystem "phasor": in 1 v (phase voltages), 2 t; out 1 V_re, 2 V_im
+    % [pu]. The phase voltages are sampled at p.sim.Ts (the Simscape local
+    % solver runs at p.net.emtTs in EMT mode; in phasor mode the hold is a
+    % pass-through), the MATLAB Function "space phasor" (inputs v, t, Vn,
+    % w0) transforms them, and in EMT mode a one-cycle moving average
+    % (phasorFilterVariant) removes the ripple.
+    s = b + "/phasor";
+    add_block("built-in/Subsystem", s, "Position", pos);
+    add_block("simulink/Sources/In1", s + "/v", "Port", "1", "Position", [20 40 50 54]);
+    add_block("simulink/Sources/In1", s + "/t", "Port", "2", "Position", [20 90 50 104]);
+    add_block("simulink/Discrete/Zero-Order Hold", s + "/hold", "SampleTime", "HPP_Ts", "Position", [90 32 120 62]);
+    addMatlabFunction(s + "/space phasor", "phasor", ["v", "t", "Vn", "w0"], ["V_re", "V_im"], phasorBody(), "", [170 30 270 130]);
+    add_block("simulink/Sources/Constant", s + "/Vn", "Value", Vn, "Position", [60 140 120 160]);
+    add_block("simulink/Sources/Constant", s + "/w0", "Value", "2*pi*p.grid.f0", "Position", [60 180 120 200]);
+    phasorFilterVariant(s + "/filter", [320 40 400 120]);
+    add_block("simulink/Sinks/Out1", s + "/V_re", "Port", "1", "Position", [450 55 480 69]);
+    add_block("simulink/Sinks/Out1", s + "/V_im", "Port", "2", "Position", [450 95 480 109]);
+    add_line(s, "v/1", "hold/1");  add_line(s, "hold/1", "space phasor/1");  add_line(s, "t/1", "space phasor/2");
+    add_line(s, "Vn/1", "space phasor/3");  add_line(s, "w0/1", "space phasor/4");
+    add_line(s, "space phasor/1", "filter/1");  add_line(s, "space phasor/2", "filter/2");
+    add_line(s, "filter/1", "V_re/1");  add_line(s, "filter/2", "V_im/1");
 end
