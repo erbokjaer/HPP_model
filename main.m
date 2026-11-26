@@ -4,17 +4,17 @@
 %  the cases in a set with their numbers and names.
 tic
 % Settings
-setName  = "nominal";                 % case set in scripts/+caseSets, or "all": every set
+setName  = "emt_test";                % case set in scripts/+caseSets, or "all": every set
                                       % (runSweep per set, then plotAllResults below)
 caseIds  = [];                        % names or numbers, e.g. [1 4 7]; [] = all cases (ignored for "all")
 rerun    = true;                      % false = reuse saved results where they exist
 mode     = "rapid";                   % "rapid": compiled once, ~1.5-2 s per 60 s case (fastest);
                                       % "normal": for debugging with scopes inside the models
 fastRestart = true;                   % normal mode only: keep the model compiled between runs
-network  = "nodal";                   % "nodal" (RMS, fastest) or "simscape" (Simscape Electrical)
-simscapeMode = "phasor";              % Simscape network only: "phasor" or "emt" (time domain,
+network  = "simscape";                % "nodal" (RMS, fastest) or "simscape" (Simscape Electrical)
+simscapeMode = "emt";                 % Simscape network only: "phasor" or "emt" (time domain,
                                       % 50 us step, the first build takes several minutes)
-converter = "source";                 % "source": current source (RMS); "averaged": current loop,
+converter = "averaged";               % "source": current source (RMS); "averaged": current loop,
                                       % LCL filter and DC link (no rebuild needed)
 window   = [];                        % [] = run from t = 0; [pre post] = event window: start pre s
                                       % before the set's first event from a saved operating point,
