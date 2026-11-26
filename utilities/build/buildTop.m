@@ -1585,8 +1585,12 @@ function phasorFilterVariant(vs, pos)
             if k == 1
                 add_line(c, io(j) + " in/1", io(j) + "/1");
             else
+                % the window starts filled with the nominal phasor (1, 0 pu),
+                % not with zeros: an empty window would show the controllers
+                % no voltage for the first cycle (a start-up artefact)
                 add_block("simulink/Discrete/Discrete FIR Filter", c + "/MAF " + io(j), "Coefficients", ...
-                    "ones(1," + nW + ")/" + nW, "SampleTime", "-1", "Position", [120 40*j-8 200 40*j+22]);
+                    "ones(1," + nW + ")/" + nW, "InitialStates", string(double(j == 1)), ...
+                    "SampleTime", "-1", "Position", [120 40*j-8 200 40*j+22]);
                 add_line(c, io(j) + " in/1", "MAF " + io(j) + "/1");
                 add_line(c, "MAF " + io(j) + "/1", io(j) + "/1");
             end
@@ -1595,7 +1599,7 @@ function phasorFilterVariant(vs, pos)
     end
     set_param(vs, "VariantActivationTime", "update diagram", "Description", ...
         "Voltage phasor filter, chosen per run by HPP_simscape: None (1, phasor mode) or MAF (2, EMT: " + ...
-        "moving average over one cycle at p.sim.Ts).");
+        "moving average over one cycle at p.sim.Ts, starting from the nominal phasor 1 + 0j pu).");
 end
 
 function alignPhys(blk, x, yPort)
