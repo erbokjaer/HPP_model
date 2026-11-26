@@ -11,8 +11,15 @@ rerun    = true;                      % false = reuse saved results where they e
 mode     = "rapid";                   % "rapid": compiled once, ~1.5-2 s per 60 s case (fastest);
                                       % "normal": for debugging with scopes inside the models
 fastRestart = true;                   % normal mode only: keep the model compiled between runs
-network  = "nodal";                   % "nodal" (fast) or "simscape" (Simscape Electrical, ~5x slower)
-delays   = "fixed";                    % "fixed" (fastest), "variable" (delay sweeps without rebuilding)
+network  = "nodal";                   % "nodal" (RMS, fastest) or "simscape" (Simscape Electrical)
+simscapeMode = "phasor";              % Simscape network only: "phasor" or "emt" (time domain,
+                                      % 50 us step, the first build takes several minutes)
+converter = "source";                 % "source": current source (RMS); "averaged": current loop,
+                                      % LCL filter and DC link (no rebuild needed)
+window   = [];                        % [] = run from t = 0; [pre post] = event window: start pre s
+                                      % before the set's first event from a saved operating point,
+                                      % stop post s after it (Inf = to the stop time), e.g. [1 Inf]
+delays   = "fixed";                   % "fixed" (fastest), "variable" (delay sweeps without rebuilding)
                                       % or "auto" (variable if the case set changes a delay)
 signals  = ["P_poc", "Q_poc", "V_poc", "P_wpp", "P_spp", "P_bess", "SOC"];
 theme    = "auto";                    % "auto" (MATLAB theme), "light" or "dark"
@@ -21,22 +28,24 @@ exportTo = "";                        % e.g. "figures/handpicked.png"; "" = no e
 plotPurpose = "debug";                % "debug": every signal of every set (results/figures/debug);
                                       % "report": the figures of reportFigures.m (results/figures/report);
                                       % "both"; "none": no plots
-plotMode    = "show";          % "save" (in the background), "showAndSave" or "show"
+plotMode    = "show";                 % "save" (in the background), "showAndSave" or "show"
+
+runOpts = {"Network", network, "SimscapeMode", simscapeMode, "Converter", converter, ...
+           "Delays", delays, "Window", window};
 
 if setName == "all"
     %% Run every case set (or load), then plotAllResults
     sets = listCaseSets();
-    root = currentProject().RootFolder;
     for s = sets(:)'
         if ~rerun && isfile(fullfile(resultsFolder(s), "sweep.mat"))
             fprintf("Kept saved results of %s\n", s);
             continue
         end
         try
-            runSweep(s, Mode=mode, Network=network, Delays=delays, ...
-                FastRestart=fastRestart && mode == "normal");
+            runSweep(s, runOpts{:}, Mode=mode, FastRestart=fastRestart && mode == "normal");
         catch err
-            % e.g. a set that changes compile-time values cannot use Fast Restart
+            % e.g. a set that changes compile-time values cannot use Fast
+            % Restart, or a set without an event cannot use the window
             fprintf(2, "%s: %s\n", s, err.message);
         end
     end
@@ -70,7 +79,7 @@ else
                 % no saved result for this case: run it below
             end
         end
-        out(k) = runCase(setName, id, Network=network, Mode=mode, FastRestart=fastRestart, Delays=delays);
+        out(k) = runCase(setName, id, runOpts{:}, Mode=mode, FastRestart=fastRestart);
     end
 
     % Summary

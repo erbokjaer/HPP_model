@@ -18,16 +18,24 @@ function out = runCase(setName, caseId, opts)
 %                                             apply.
 %                                             Falls back to normal mode with Fast
 %                                             Restart (warning with the reason)
-%                                             when there is no C compiler, with
-%                                             the Simscape network, when
+%                                             when there is no C compiler, when
 %                                             checkModels finds block parameters
 %                                             compiled code cannot use, or when
 %                                             the build fails (see rapidTarget).
 %   runCase(..., Network="nodal")             network model for this run:
 %                                             "nodal" (fast nodal solver) or
-%                                             "simscape" (Simscape Electrical,
-%                                             about 5 times slower); default
-%                                             p.net.solverType
+%                                             "simscape" (Simscape Electrical);
+%                                             default p.net.solverType
+%   runCase(..., SimscapeMode="emt")          Simscape network mode: "phasor"
+%                                             or "emt" (time domain, step
+%                                             p.net.emtTs); default
+%                                             p.net.simscapeMode. No effect
+%                                             with the nodal network.
+%   runCase(..., Converter="averaged")        converter model of all assets:
+%                                             "source" (current source, RMS)
+%                                             or "averaged" (current loop,
+%                                             LCL filter, DC link); default
+%                                             p.conv.type (tunable, no rebuild)
 %   runCase(..., Delays="variable")           how the communication delays
 %                                             are compiled: "fixed" (fastest),
 %                                             "variable" (tunable, for delay
@@ -75,6 +83,8 @@ function out = runCase(setName, caseId, opts)
         opts.FastRestart (1,1) logical = false
         opts.Delays (1,1) string {mustBeMember(opts.Delays, ["", "auto", "fixed", "variable"])} = ""
         opts.Window double {mustBeWindow} = []
+        opts.SimscapeMode (1,1) string {mustBeMember(opts.SimscapeMode, ["", "phasor", "emt"])} = ""
+        opts.Converter (1,1) string {mustBeMember(opts.Converter, ["", "source", "averaged"])} = ""
     end
     persistent lastSignature     % compile-time values of the model kept compiled
 
@@ -84,13 +94,16 @@ function out = runCase(setName, caseId, opts)
 
     p = applyCase(HPP_parameters(), cases(k, :));
     if opts.Network ~= "", p.net.solverType = opts.Network; end
+    if opts.SimscapeMode ~= "", p.net.simscapeMode = opts.SimscapeMode; end
+    if opts.Converter ~= "", p.conv.type = find(opts.Converter == ["source", "averaged"]); end
+    p = deriveParameters(p);
     [p, delayCode] = delayMode(p, cases, opts.Delays);
     checkModelBuild(p);
-    fprintf("Running %s, case %d%s, %s network, %s delays\n", setName, k, nameSuffix(caseName), ...
-        p.net.solverType, p.comm.delays);
+    fprintf("Running %s, case %d%s, %s, %s delays\n", setName, k, nameSuffix(caseName), ...
+        networkLabel(p), p.comm.delays);
 
-    % Rapid Accelerator if possible; otherwise (no compiler, Simscape network,
-    % checkModels findings, failed build: rapidTarget warns why) normal mode
+    % Rapid Accelerator if possible; otherwise (no compiler, checkModels
+    % findings, failed build: rapidTarget warns why) normal mode
     % with Fast Restart
     mode = opts.Mode;  useFR = opts.FastRestart;
     if mode == "rapid"
@@ -153,6 +166,15 @@ function out = runCase(setName, caseId, opts)
         save(f, "out", "p", "caseInfo");
         fprintf("Saved %s\n", f);
     end
+end
+
+function s = networkLabel(p)
+    % "nodal network", "simscape phasor network" or "simscape emt network",
+    % plus the converter model when it is not the current source
+    s = string(p.net.solverType);
+    if s == "simscape", s = s + " " + p.net.simscapeMode; end
+    s = s + " network";
+    if p.conv.type == 2, s = s + ", averaged converter"; end
 end
 
 function s = nameSuffix(caseName)

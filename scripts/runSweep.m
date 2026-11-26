@@ -21,10 +21,16 @@ function out = runSweep(setName, opts)
 %                                                 model or a model file change. Falls back to normal
 %                                                 mode (warning with the reason,
 %                                                 see rapidTarget) when there is
-%                                                 no C compiler, with the
-%                                                 Simscape network, on
-%                                                 checkModels findings or a
-%                                                 failed build.
+%                                                 no C compiler, on checkModels
+%                                                 findings or a failed build.
+%   out = runSweep(..., SimscapeMode="emt")       Simscape network mode: "phasor"
+%                                                 or "emt" (time domain, step
+%                                                 p.net.emtTs); default
+%                                                 p.net.simscapeMode
+%   out = runSweep(..., Converter="averaged")     converter model of all assets:
+%                                                 "source" (current source, RMS)
+%                                                 or "averaged"; default
+%                                                 p.conv.type
 %   out = runSweep(..., FastRestart=true)         normal mode, compile once and
 %                                                 reuse for all cases (about
 %                                                 8-10 s per case). Every
@@ -80,6 +86,8 @@ function out = runSweep(setName, opts)
         opts.Mode (1,1) string {mustBeMember(opts.Mode, ["normal", "rapid"])} = "normal"
         opts.Delays (1,1) string {mustBeMember(opts.Delays, ["", "auto", "fixed", "variable"])} = ""
         opts.Window double {mustBeWindow} = []
+        opts.SimscapeMode (1,1) string {mustBeMember(opts.SimscapeMode, ["", "phasor", "emt"])} = ""
+        opts.Converter (1,1) string {mustBeMember(opts.Converter, ["", "source", "averaged"])} = ""
     end
     rapid = opts.Mode == "rapid";
     if rapid && opts.FastRestart
@@ -89,6 +97,9 @@ function out = runSweep(setName, opts)
     cases = defineCases(setName);
     pBase = HPP_parameters();
     if opts.Network ~= "", pBase.net.solverType = opts.Network; end
+    if opts.SimscapeMode ~= "", pBase.net.simscapeMode = opts.SimscapeMode; end
+    if opts.Converter ~= "", pBase.conv.type = find(opts.Converter == ["source", "averaged"]); end
+    pBase = deriveParameters(pBase);
     [pBase, delayCode] = delayMode(pBase, cases, opts.Delays);    % one mode for the whole set
     fixedDelays = pBase.comm.delays == "fixed";
     fprintf("[%s] %d case(s), %s delays\n", setName, height(cases), pBase.comm.delays);
@@ -120,7 +131,7 @@ function out = runSweep(setName, opts)
 
     if rapid
         % Rapid Accelerator where possible; from the first case where it is
-        % not (no compiler, Simscape network, checkModels findings, failed
+        % not (no compiler, checkModels findings, failed
         % build: rapidTarget warns why), the rest runs in normal mode
         out = Simulink.SimulationOutput.empty;
         k0 = numel(in) + 1;                                    % first case in normal mode
@@ -216,7 +227,8 @@ function checkTunable(cases, setName, fixedDelays)
     % buffers, delay mode, network model, PLL variant; with fixed delays
     % also the delays) would silently keep their first value. Refuse case
     % sets that change them.
-    exact  = ["net.solverType", "pll.type", "sim.Ts", "comm.maxDelay", "comm.delays"];
+    exact  = ["net.solverType", "net.simscapeMode", "net.emtTs", "pll.type", "sim.Ts", ...
+              "comm.maxDelay", "comm.delays"];
     suffix = [".nFeeders", ".nPerFeeder", ".N"];
     cols = string(cases.Properties.VariableNames);
     bad = cols(arrayfun(@(c) any(c == exact) || any(endsWith(c, suffix)) || ...
