@@ -23,8 +23,11 @@ function st = rapidTarget(p, opts)
 %   (units per plant), the time step, the delay mode p.comm.delays (with
 %   "fixed" delays also the delays; with "variable" delays comm.maxDelay,
 %   the size of the delay buffers), the network model (with the Simscape
-%   network: its mode, phasor or EMT, simscapeMode), or a model file in
-%   models/ (after buildHPP or an edit). p.comm.delays = "auto" counts as
+%   network: its mode, phasor or EMT, simscapeMode), a model file in
+%   models/ (after buildHPP or an edit), or the structure of p (field
+%   names, classes and sizes, e.g. after a new parameter: a target only
+%   accepts a p of the type it was built with). Every build starts from an
+%   empty target folder (an older target there would keep the old type of p). p.comm.delays = "auto" counts as
 %   "fixed" here (runCase / runSweep resolve it per case set, delayMode). The
 %   fingerprint of these is saved next to the target
 %   (hpp_rapid_fingerprint.mat), so a new MATLAB session reuses an unchanged
@@ -55,7 +58,7 @@ function st = rapidTarget(p, opts)
     % after a normal-mode run with FastRestart=true): switch it off first
     fastRestartOff();
 
-    key = struct("sig", compileSignature(p), "models", modelStamp(), ...
+    key = struct("sig", compileSignature(p), "models", modelStamp(), "ptype", typeSignature(p), ...
         "noCompilerHook", getenv("HPP_TEST_NO_COMPILER"));
     folder = fullfile(Simulink.fileGenControl("get", "CacheFolder"), "slprj", "raccel", "HPP");
     keyFile = fullfile(folder, "hpp_rapid_fingerprint.mat");
@@ -131,6 +134,13 @@ function buildTarget(p, verbose)
         end
     end
 
+    % start from an empty target: a build into a folder with an older target
+    % keeps the old type of p (its fields and their classes), and the first
+    % run with the new p then fails ("The tuned value of the variable 'p'
+    % ... has a different type than the variable's default value"), forced
+    % rebuild or not
+    removeOldTarget();
+
     % one step: Simulink reports no progress while it compiles; the estimate
     % is last build's duration. Verbose: Simulink's own build log as well
     set_param("HPP", "AccelVerboseBuild", onOff(verbose));
@@ -149,6 +159,35 @@ function restoreBaseVar(name, had, old)
         assignin("base", name, old);
     else
         evalin("base", "clear " + name);
+    end
+end
+
+function removeOldTarget()
+    % the Rapid Accelerator target of HPP (slprj/raccel/HPP, with the
+    % fingerprint) and HPP's Simulink cache file, which can hold a copy of it
+    cache = Simulink.fileGenControl("get", "CacheFolder");
+    folder = fullfile(cache, "slprj", "raccel", "HPP");
+    if isfolder(folder), rmdir(folder, "s"); end
+    slxc = fullfile(cache, "HPP.slxc");
+    if isfile(slxc), delete(slxc); end
+end
+
+function s = typeSignature(x)
+    % field names, classes and sizes of p, recursively: a Rapid Accelerator
+    % target only accepts a p of the type it was built with, so a change in
+    % p's structure (a new or removed field, string / char) needs a rebuild
+    % even when compileSignature is unchanged
+    if isstruct(x)
+        f = string(fieldnames(x))';
+        s = "struct" + mat2str(size(x)) + "{";
+        if isscalar(x)
+            for n = f, s = s + n + ":" + typeSignature(x.(n)) + ";"; end
+        else
+            s = s + strjoin(f, ",");
+        end
+        s = s + "}";
+    else
+        s = string(class(x)) + mat2str(size(x));
     end
 end
 
